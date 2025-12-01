@@ -15,6 +15,8 @@ export PATH=$CUDA_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 ```
 
+can run `python testing/env_test.py` to validate that the basic libraries necessary for the project are present
+
 # Interface
 Let: 
 - B: batch_size, 
@@ -54,27 +56,41 @@ python testing/ctc_decoder_test.py --candidate-device cuda
 ```
 
 # Running the tests 
-Inside the `src/ctc` run `make`. 
-Then, cd to the root of the project and run the following command, to make sure the path is configured: 
-```export PYTHONPATH=$PWD:$PYTHONPATH```
-Then, you can run the test using: 
-```python testing/ctc_decoder_test.py --candidate-device cuda```
+build whichever extension you need first:
 
-*Expected output (for now):* 
 ```
-[CTC CUDA] hello world! batch=2 time=120 vocab=32
-================================================================================
-candidate decoder outputs:
-sample 0: ['', '', '']
-sample 1: ['', '', '']
-================================================================================
+# hello-world toolchain check
+cd beamsearch_cuda/src/hello && make
+
+# full CUDA decoder
+cd beamsearch_cuda/src/ctc && make
+```
+
+set path to ensure modules are visible
+```
+export PYTHONPATH=$PWD:$PYTHONPATH
+```
+
+run the tests with corresponding flags
+```
+# flashlight (ref) decoder + hello-world CUDA kernel (prints the CUDA greeting only)
+python testing/ctc_decoder_test.py --hello
+
+# flashlight (ref) decoder + full CUDA beam search (requires --candidate-device cuda)
+python testing/ctc_decoder_test.py --candidate-device cuda
 ```
 
 # CTC CUDA hello world
 
-`beamsearch_cuda.beam_search.ctc_beam_search` currently loads a lightweight CUDA
-launches a simple hello world kernel. Run it by passing CUDA tensors for both 
+`beamsearch_cuda.beam_search.ctc_beam_search` runs the CUDA decoder on tensors passed for 
 `log_probs` and `input_lengths`. 
+
+The hello-world kernel lives under `beamsearch_cuda/src/hello` and serves as a toolchain check. Can run it with: 
+```
+python testing/ctc_decoder_test.py --helo
+```
+
+goal example usage:
 
 ```python
 import torch

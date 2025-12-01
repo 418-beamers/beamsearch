@@ -1,3 +1,5 @@
+# run this to validate cuda install
+
 import torch
 import torch, sys
 

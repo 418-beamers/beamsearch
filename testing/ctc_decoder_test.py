@@ -7,15 +7,20 @@ currently we make a batch of (B,T,V) shaped log_probs to feed them through both 
 """
 
 from __future__ import annotations
-
 import argparse
+from pathlib import Path
+import sys
+
 import torch
 from torchaudio.models.decoder import ctc_decoder
+from torch.utils.cpp_extension import load as load_extension
 
-try:
-    from beamsearch_cuda import beam_search as cuda_decoder_module
-except ModuleNotFoundError:
-    cuda_decoder_module = None
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+cuda_decoder_module = None
+hello_extension = None
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -40,7 +45,43 @@ def parse_args():
         default=0,
         help="manual seed for reproducibility",
     )
+
+    # effectively a toolchain check at this point
+    parser.add_argument(
+        "--hello",
+        action="store_true",
+        help="run the hello-world CUDA extension instead of the beam search decoder",
+    )
     return parser.parse_args()
+
+
+def load_candidate_module():
+    global cuda_decoder_module
+
+    if cuda_decoder_module is None:
+        try:
+            from beamsearch_cuda import beam_search as module
+        except ModuleNotFoundError:
+            module = None
+
+        cuda_decoder_module = module
+
+    return cuda_decoder_module
+
+def load_hello_extension():
+    global hello_extension
+
+    if hello_extension is None:
+        src_dir = PROJECT_ROOT / "beamsearch_cuda" / "src" / "hello"
+        sources = [src_dir / "binding.cpp", src_dir / "ctc_beam_search_cuda.cu"]
+        hello_extension = load_extension(
+            name="beamsearch_cuda_hello",
+            sources=[str(path) for path in sources],
+            extra_include_paths=[str(src_dir)],
+            verbose=False,
+        )
+
+    return hello_extension
 
 def generate_test_inputs(
     batch_size: int,
@@ -136,11 +177,36 @@ def main():
 
 
     print("="*80)
-    if cuda_decoder_module and hasattr(cuda_decoder_module, "ctc_beam_search"):
-        candidate_fn = cuda_decoder_module.ctc_beam_search
+    if args.hello:
+        if not torch.cuda.is_available():
+
+            print("CUDA is required for the hello-world extension.")
+            print("="*80)
+            return
+
+        hello_ext = load_hello_extension()
+
+        log_probs_candidate = log_probs_btv.to("cuda")
+        input_lengths_candidate = input_lengths.to(device="cuda", dtype=torch.int32)
+        
+        hello_ext.ctc_hello(log_probs_candidate, input_lengths_candidate)
+
+        print("hello-world CUDA extension executed.")
+        print("="*80)
+        return
+
+    candidate_module = load_candidate_module()
+
+    if (
+        candidate_module
+        and hasattr(candidate_module, "ctc_beam_search")
+        and candidate_device.type == "cuda"
+    ):
+
+        candidate_fn = candidate_module.ctc_beam_search
 
         log_probs_candidate = log_probs_btv.to(candidate_device)
-        input_lengths_candidate = input_lengths.to(candidate_device)
+        input_lengths_candidate = input_lengths.to(device=candidate_device, dtype=torch.int32)
 
         try:
             candidate_hypotheses, _ = candidate_fn(
@@ -167,8 +233,8 @@ def main():
             print(f"sample {batch_idx}: {decoded}")
     else:
         print(
-            "\nbeamsearch_cuda not importable or missing `ctc_beam_search`; "
-            "skipping candidate comparison."
+            "\nbeamsearch_cuda not importable or missing `ctc_beam_search`, "
+            "or candidate device is not CUDA skipping candidate comparison."
         )
     print("="*80)
 
