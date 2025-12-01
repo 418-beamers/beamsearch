@@ -9,10 +9,15 @@ currently we make a batch of (B,T,V) shaped log_probs to feed them through both 
 from __future__ import annotations
 import argparse
 from pathlib import Path
+import sys
 
 import torch
 from torchaudio.models.decoder import ctc_decoder
 from torch.utils.cpp_extension import load as load_extension
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 cuda_decoder_module = None
 hello_extension = None
@@ -67,8 +72,7 @@ def load_hello_extension():
     global hello_extension
 
     if hello_extension is None:
-        project_root = Path(__file__).resolve().parent.parent
-        src_dir = project_root / "beamsearch_cuda" / "src" / "hello"
+        src_dir = PROJECT_ROOT / "beamsearch_cuda" / "src" / "hello"
         sources = [src_dir / "binding.cpp", src_dir / "ctc_beam_search_cuda.cu"]
         hello_extension = load_extension(
             name="beamsearch_cuda_hello",
