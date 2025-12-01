@@ -1,9 +1,10 @@
 # Setup
 Run the following commands to create a conda env ready to run the test harness (temporarily for CPU only)
 ```bash
-conda create -n beams python=3.11
+conda create -n beams python=3.10 -y
 conda activate beams
-conda install pytorch torchvision torchaudio cpuonly -c pytorch -c conda-forge
+python -m pip install --upgrade pip setuptools wheel ninja
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 python -m pip install flashlight-text
 ```
 
