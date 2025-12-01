@@ -53,6 +53,23 @@ To compare against CUDA implementation:
 python testing/ctc_decoder_test.py --candidate-device cuda
 ```
 
+# Running the tests 
+Inside the `src/ctc` run `make`. 
+Then, cd to the root of the project and run the following command, to make sure the path is configured: 
+```export PYTHONPATH=$PWD:$PYTHONPATH```
+Then, you can run the test using: 
+```python testing/ctc_decoder_test.py --candidate-device cuda```
+
+*Expected output (for now):* 
+```
+[CTC CUDA] hello world! batch=2 time=120 vocab=32
+================================================================================
+candidate decoder outputs:
+sample 0: ['', '', '']
+sample 1: ['', '', '']
+================================================================================
+```
+
 # CTC CUDA hello world
 
 `beamsearch_cuda.beam_search.ctc_beam_search` currently loads a lightweight CUDA
