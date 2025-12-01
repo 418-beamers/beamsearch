@@ -1,13 +1,5 @@
 import torch
-import torch.nn as nn
 from typing import Optional, Tuple
-
-"""
-CTC Beam Search Decoder
-
-This module provides a PyTorch interface to the CUDA-accelerated CTC beam search decoder.
-The CTC beam search algorithm efficiently finds likely output sequences from CTC network outputs.
-"""
 
 try:
     import beamsearch_cuda_native
@@ -50,7 +42,6 @@ class CTCBeamSearchDecoder:
         self.batch_size = batch_size
         self.max_time = max_time
 
-        # Create and initialize the state
         self.state_ptr = beamsearch_cuda_native.create_ctc_beam_search_state(
             batch_size,
             beam_width,
@@ -61,7 +52,6 @@ class CTCBeamSearchDecoder:
         )
 
     def __del__(self):
-        """Clean up CUDA resources"""
         if hasattr(self, 'state_ptr'):
             beamsearch_cuda_native.free_ctc_beam_search_state(self.state_ptr)
 
@@ -103,7 +93,6 @@ class CTCBeamSearchDecoder:
             >>> sequences, lengths, scores = decoder.decode(log_probs)
             >>> best_sequence = sequences[:, 0, :]  # Best beam for each batch
         """
-        # Validate inputs
         if not log_probs.is_cuda:
             raise ValueError("log_probs must be on CUDA device")
         if log_probs.dtype != torch.float32:
@@ -129,7 +118,6 @@ class CTCBeamSearchDecoder:
                 f"num_classes mismatch: expected {self.num_classes}, got {num_classes}"
             )
 
-        # Handle input_lengths
         if input_lengths is not None:
             if not input_lengths.is_cuda:
                 raise ValueError("input_lengths must be on CUDA device")
@@ -143,7 +131,6 @@ class CTCBeamSearchDecoder:
         else:
             input_lengths = torch.empty(0, dtype=torch.int32, device='cuda')
 
-        # Initialize beam search
         beamsearch_cuda_native.initialize_ctc_beam_search(
             self.state_ptr,
             self.batch_size,
@@ -154,7 +141,6 @@ class CTCBeamSearchDecoder:
             self.blank_id
         )
 
-        # Run beam search
         beamsearch_cuda_native.run_ctc_beam_search(
             self.state_ptr,
             log_probs,
@@ -167,7 +153,6 @@ class CTCBeamSearchDecoder:
             input_lengths
         )
 
-        # Get results
         sequences = beamsearch_cuda_native.get_sequences(
             self.state_ptr,
             self.batch_size,
@@ -214,7 +199,6 @@ class CTCBeamSearchDecoder:
         """
         sequences, lengths, scores = self.decode(log_probs, input_lengths)
 
-        # Return only the best beam (index 0)
         best_sequences = sequences[:, 0, :]
         best_lengths = lengths[:, 0]
 
@@ -247,7 +231,7 @@ def ctc_beam_search_decode(
         scores: Shape [batch_size, beam_width]
     """
     batch_size, max_time, num_classes = log_probs.shape
-    max_output_length = max_time  # Conservative upper bound
+    max_output_length = max_time  
 
     decoder = CTCBeamSearchDecoder(
         beam_width=beam_width,

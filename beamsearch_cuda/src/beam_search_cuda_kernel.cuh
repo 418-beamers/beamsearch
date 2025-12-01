@@ -6,21 +6,19 @@
 struct CTCBeamSearchConfig {
     int batchSize;
     int beamWidth;
-    int numClasses;      // vocabulary size (including blank)
-    int maxTime;         // maximum number of time steps
-    int maxOutputLength; // maximum output sequence length
-    int blankId;         // blank token id (typically 0)
+    int numClasses;      
+    int maxTime;         
+    int maxOutputLength; 
+    int blankId;         
 };
 
 struct CTCBeamSearchState {
-    // Prefix sequences and scores
     int* prefixes;          // [batchSize, beamWidth, maxOutputLength] - output sequences
     int* prefixLengths;     // [batchSize, beamWidth] - length of each prefix
     float* probBlank;       // [batchSize, beamWidth] - P(prefix ends in blank)
     float* probNonBlank;    // [batchSize, beamWidth] - P(prefix ends in non-blank)
     float* probTotal;       // [batchSize, beamWidth] - total probability (Pb + Pnb)
 
-    // Temporary buffers for beam expansion
     float* nextProbBlank;   // [batchSize, beamWidth * (numClasses + 1)]
     float* nextProbNonBlank;// [batchSize, beamWidth * (numClasses + 1)]
     float* nextProbTotal;   // [batchSize, beamWidth * (numClasses + 1)]
@@ -28,7 +26,6 @@ struct CTCBeamSearchState {
     int* nextPrefixLengths; // [batchSize, beamWidth * (numClasses + 1)]
     int* nextLabels;        // [batchSize, beamWidth * (numClasses + 1)] - last character
 
-    // For sorting and selecting top-k
     int* sortedIndices;     // [batchSize, beamWidth * (numClasses + 1)]
 };
 
