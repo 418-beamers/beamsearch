@@ -3,73 +3,72 @@
 
 #include <cuda_runtime.h>
 
-struct BeamSearchConfig {
-    int batchSize;       
-    int beamWidth;       
-    int vocabSize;       // output vocabulary size
-    int maxSeqLength;    
-    int eosTokenId;      // EOS token identifier
+struct CTCBeamSearchConfig {
+    int batchSize;
+    int beamWidth;
+    int numClasses;      // vocabulary size (including blank)
+    int maxTime;         // maximum number of time steps
+    int maxOutputLength; // maximum output sequence length
+    int blankId;         // blank token id (typically 0)
 };
 
-struct BeamSearchState {
-    float* beamScores;      // [batchSize, beamWidth] - cumulative scores
-    int* beamSequences;     // [batchSize, beamWidth, maxSeqLength] - token sequences
-    int* beamLengths;       // [batchSize, beamWidth] - current sequence lengths
-    bool* beamFinished;     // [batchSize, beamWidth] - EOS completion flags
-    int* parentIndices;     // [batchSize, beamWidth] - parent beam for backtracking
+struct CTCBeamSearchState {
+    // Prefix sequences and scores
+    int* prefixes;          // [batchSize, beamWidth, maxOutputLength] - output sequences
+    int* prefixLengths;     // [batchSize, beamWidth] - length of each prefix
+    float* probBlank;       // [batchSize, beamWidth] - P(prefix ends in blank)
+    float* probNonBlank;    // [batchSize, beamWidth] - P(prefix ends in non-blank)
+    float* probTotal;       // [batchSize, beamWidth] - total probability (Pb + Pnb)
 
-    // temporary buffers
-    float* candidateScores; // [batchSize, beamWidth * vocabSize] - all candidates
-    int* candidateTokens;   // [batchSize, beamWidth * vocabSize] - candidate tokens
-    int* candidateParents;  // [batchSize, beamWidth * vocabSize] - candidate parents
+    // Temporary buffers for beam expansion
+    float* nextProbBlank;   // [batchSize, beamWidth * (numClasses + 1)]
+    float* nextProbNonBlank;// [batchSize, beamWidth * (numClasses + 1)]
+    float* nextProbTotal;   // [batchSize, beamWidth * (numClasses + 1)]
+    int* nextPrefixes;      // [batchSize, beamWidth * (numClasses + 1), maxOutputLength]
+    int* nextPrefixLengths; // [batchSize, beamWidth * (numClasses + 1)]
+    int* nextLabels;        // [batchSize, beamWidth * (numClasses + 1)] - last character
+
+    // For sorting and selecting top-k
+    int* sortedIndices;     // [batchSize, beamWidth * (numClasses + 1)]
 };
 
 /**
- * Initialize beam search state for decoding start
- * Only first beam is active with start token, others inactive
+ * Initialize CTC beam search state
+ * All beams start with empty prefix
  */
-void launchInitializeBeamSearch(
-    BeamSearchState& state,
-    const BeamSearchConfig& config,
-    int startToken,
+void launchInitializeCTCBeamSearch(
+    CTCBeamSearchState& state,
+    const CTCBeamSearchConfig& config,
     cudaStream_t stream = 0
 );
 
 /**
- * Execute one decoding step: expand beams and select top-k candidates
+ * Execute CTC beam search on a batch of input sequences
  *
  * @param state          Beam state (updated in-place)
  * @param config         Search configuration
- * @param decoderProbs   [batchSize, beamWidth, vocabSize] - probabilities from RNN
- * @param currentStep    Current decoding timestep (0-indexed)
+ * @param logProbs       [batchSize, maxTime, numClasses] - log probabilities from CTC
+ * @param inputLengths   [batchSize] - actual length of each sequence (can be NULL for full length)
  */
-void launchBeamSearchStep(
-    BeamSearchState& state,
-    const BeamSearchConfig& config,
-    const float* decoderProbs,
-    int currentStep,
+void launchCTCBeamSearch(
+    CTCBeamSearchState& state,
+    const CTCBeamSearchConfig& config,
+    const float* logProbs,
+    const int* inputLengths,
     cudaStream_t stream = 0
 );
 
 /**
- * Allocate device memory for beam search state
+ * Allocate device memory for CTC beam search state
  */
-cudaError_t allocateBeamSearchState(
-    BeamSearchState& state,
-    const BeamSearchConfig& config
+cudaError_t allocateCTCBeamSearchState(
+    CTCBeamSearchState& state,
+    const CTCBeamSearchConfig& config
 );
 
 /**
- * Free device memory for beam search state
+ * Free device memory for CTC beam search state
  */
-void freeBeamSearchState(BeamSearchState& state);
-
-/**
- * Check if all beams have finished (returns host boolean)
- */
-bool checkAllBeamsFinished(
-    const BeamSearchState& state,
-    const BeamSearchConfig& config
-);
+void freeCTCBeamSearchState(CTCBeamSearchState& state);
 
 #endif // BEAM_SEARCH_CUDA_KERNEL_CUH
