@@ -15,6 +15,8 @@ export PATH=$CUDA_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 ```
 
+can run `python testing/env_test.py` to validate that the basic libraries necessary for the project are present
+
 # Interface
 Let: 
 - B: batch_size, 

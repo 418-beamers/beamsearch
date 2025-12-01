@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 import torch
 from torch.utils.cpp_extension import load
@@ -8,23 +8,27 @@ _CTC_EXTENSION = None
 
 def _load_ctc_extension():
     global _CTC_EXTENSION
+
     if _CTC_EXTENSION is None:
         base_dir = Path(__file__).resolve().parent
         src_dir = base_dir / "src" / "ctc"
+
         sources = [
             src_dir / "binding.cpp",
             src_dir / "ctc_beam_search_cuda.cu",
         ]
+
         _CTC_EXTENSION = load(
             name="beamsearch_cuda_native",
             sources=[str(path) for path in sources],
             extra_include_paths=[str(src_dir)],
             verbose=False,
         )
+
     return _CTC_EXTENSION
 
 
-def _prepare_input_lengths(input_lengths: Optional[torch.Tensor], batch_size: int, device: torch.device) -> torch.Tensor:
+def _prepare_input_lengths(input_lengths: torch.Tensor, batch_size: int, device: torch.device) -> torch.Tensor:
 
     if input_lengths is None:
         return torch.empty(0, dtype=torch.int32, device=device)
@@ -41,13 +45,15 @@ def _prepare_input_lengths(input_lengths: Optional[torch.Tensor], batch_size: in
     return input_lengths.contiguous()
 
 def _validate_log_probs(log_probs: torch.Tensor):
+
     if log_probs.dim() != 3:
         raise ValueError(f"log_probs must have shape (batch, time, vocab), got {tuple(log_probs.shape)}")
+
     if not log_probs.is_cuda:
         raise ValueError("log_probs must be on a CUDA device")
+
     if log_probs.dtype != torch.float32:
         raise ValueError("log_probs must be float32")
-
 
 class CTCBeamSearchDecoder:
     def __init__(
@@ -83,10 +89,10 @@ class CTCBeamSearchDecoder:
     def decode(
         self,
         log_probs: torch.Tensor,
-        input_lengths: Optional[torch.Tensor] = None,
+        input_lengths: torch.Tensor = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        
         _validate_log_probs(log_probs)
+
         batch_size, max_time, num_classes = log_probs.shape
         if batch_size != self.batch_size:
             raise ValueError(f"batch_size mismatch: expected {self.batch_size}, got {batch_size}")
@@ -146,7 +152,7 @@ class CTCBeamSearchDecoder:
     def decode_greedy(
         self,
         log_probs: torch.Tensor,
-        input_lengths: Optional[torch.Tensor] = None,
+        input_lengths: torch.Tensor = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
         sequences, lengths, _ = self.decode(log_probs, input_lengths)
@@ -160,7 +166,7 @@ def ctc_beam_search_decode(
     log_probs: torch.Tensor,
     beam_width: int = 10,
     blank_id: int = 0,
-    input_lengths: Optional[torch.Tensor] = None,
+    input_lengths: torch.Tensor = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     batch_size, max_time, num_classes = log_probs.shape
 

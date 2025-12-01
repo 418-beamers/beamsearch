@@ -234,7 +234,7 @@ def main():
     else:
         print(
             "\nbeamsearch_cuda not importable or missing `ctc_beam_search`, "
-            "or candidate device is not CUDA; skipping candidate comparison."
+            "or candidate device is not CUDA skipping candidate comparison."
         )
     print("="*80)
 

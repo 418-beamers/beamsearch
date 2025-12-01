@@ -7,7 +7,7 @@ namespace {
 __global__ void ctc_hello_kernel(int batch_size, int time_steps, int vocab_size) {
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         printf(
-            "[CTC CUDA] hello world! batch=%d time=%d vocab=%d\n",
+            "[ctc cuda] hello world! batch=%d time=%d vocab=%d\n",
             batch_size,
             time_steps,
             vocab_size
