@@ -2,8 +2,9 @@ PYTHON ?= python
 CUDA_HOME ?= /usr/local/cuda
 BUILD_DIR ?= build
 OBJ_DIR := $(BUILD_DIR)/obj
-TARGET := beamsearch_cuda_native
+TARGET := ctc_beam_search_cuda
 
+# default to Tesla T4 / SM75 unless overridden by user.
 export TORCH_CUDA_ARCH_LIST ?= 7.5
 
 EXT_SUFFIX := $(shell $(PYTHON) -c "import importlib.machinery as m; print(m.EXTENSION_SUFFIXES[0])")
