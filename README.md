@@ -44,3 +44,27 @@ To compare against CUDA implementation:
 ```bash
 python testing/ctc_decoder_test.py --candidate-device cuda
 ```
+
+# CTC CUDA hello world
+
+`beamsearch_cuda.beam_search.ctc_beam_search` currently loads a lightweight CUDA
+launches a simple hello world kernel. Run it by passing CUDA tensors for both 
+`log_probs` and `input_lengths`. 
+
+```python
+import torch
+from beamsearch_cuda import beam_search
+
+log_probs = torch.randn(2, 8, 32, device="cuda").log_softmax(-1)
+lengths = torch.tensor([8, 6], dtype=torch.int32, device="cuda")
+
+beam_search.ctc_beam_search(
+    log_probs=log_probs,
+    input_lengths=lengths,
+    beam_width=4,
+    blank_idx=0,
+    top_k=2,
+)
+```
+
+*This is just a first test to make sure the dev environment works*
