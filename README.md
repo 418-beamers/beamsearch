@@ -8,6 +8,13 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 python -m pip install flashlight-text
 ```
 
+Might also have to run these to add CUDA toolkit to path: 
+```
+export CUDA_HOME=/usr/local/cuda-12.4
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+```
+
 # Interface
 Let: 
 - B: batch_size, 
