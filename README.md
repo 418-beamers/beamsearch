@@ -1,9 +1,10 @@
 # Setup
 Run the following commands to create a conda env ready to run the test harness (temporarily for CPU only)
 ```bash
-conda create -n beams python=3.11
+conda create -n beams python=3.10 -y
 conda activate beams
-conda install pytorch torchvision torchaudio cpuonly -c pytorch -c conda-forge
+python -m pip install --upgrade pip setuptools wheel ninja
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 python -m pip install flashlight-text
 ```
 
@@ -44,3 +45,27 @@ To compare against CUDA implementation:
 ```bash
 python testing/ctc_decoder_test.py --candidate-device cuda
 ```
+
+# CTC CUDA hello world
+
+`beamsearch_cuda.beam_search.ctc_beam_search` currently loads a lightweight CUDA
+launches a simple hello world kernel. Run it by passing CUDA tensors for both 
+`log_probs` and `input_lengths`. 
+
+```python
+import torch
+from beamsearch_cuda import beam_search
+
+log_probs = torch.randn(2, 8, 32, device="cuda").log_softmax(-1)
+lengths = torch.tensor([8, 6], dtype=torch.int32, device="cuda")
+
+beam_search.ctc_beam_search(
+    log_probs=log_probs,
+    input_lengths=lengths,
+    beam_width=4,
+    blank_idx=0,
+    top_k=2,
+)
+```
+
+*This is just a first test to make sure the dev environment works*

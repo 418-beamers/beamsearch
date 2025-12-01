@@ -1,47 +1,99 @@
+from pathlib import Path
 from typing import Tuple
-import torch
 
-"""
-implement the torch autograd function here 
-"""
+import torch
+from torch.utils.cpp_extension import load
+
+_CTC_EXTENSION = None
+
+def _load_ctc_extension():
+
+    # standard loading logic for cpp modules
+    global _CTC_EXTENSION
+
+    if _CTC_EXTENSION is None:
+
+        base_dir = Path(__file__).resolve().parent
+        src_dir = base_dir / "src" / "ctc"
+
+        sources = [
+            src_dir / "binding.cpp",
+            src_dir / "ctc_beam_search_cuda.cu",
+        ]
+
+        _CTC_EXTENSION = load(
+            name="ctc_beam_search_cuda",
+            sources=[str(path) for path in sources],
+            extra_include_paths=[str(src_dir)],
+            verbose=False,
+        )
+
+    return _CTC_EXTENSION
+
+# input validation
+def _validate_inputs(
+    log_probs: torch.Tensor,
+    input_lengths: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+
+    if log_probs.dim() != 3:
+        raise ValueError(
+            f"log_probs must have shape (batch, time, vocab), got {tuple(log_probs.shape)}"
+        )
+
+    if log_probs.device.type != "cuda":
+        raise ValueError("log_probs must be on a CUDA device for the CTC extension")
+
+    if log_probs.dtype != torch.float32:
+        log_probs = log_probs.float()
+
+    if input_lengths.dim() != 1:
+        raise ValueError(
+            f"input_lengths must be 1D with shape (batch,), got {tuple(input_lengths.shape)}"
+        )
+    if input_lengths.shape[0] != log_probs.shape[0]:
+        raise ValueError(
+            "input_lengths must match the batch dimension of log_probs "
+            f"(expected {log_probs.shape[0]}, got {input_lengths.shape[0]})"
+        )
+
+    input_lengths = input_lengths.to(dtype=torch.int32, device=log_probs.device, non_blocking=True)
+    log_probs = log_probs.contiguous()
+
+    return log_probs, input_lengths.contiguous()
 
 def ctc_beam_search(
-    log_probs: torch.Tensor, 
-    input_lengths: torch.Tensor, 
-    beam_width: int = 1, # default to greedy decoding 
-    blank_idx: int = 0, # default first in vocab
-    top_k: int = 1 # default to return top-1 per batch element
+    log_probs: torch.Tensor,
+    input_lengths: torch.Tensor,
+    beam_width: int = 1,
+    blank_idx: int = 0,
+    top_k: int = 1,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Batched CTC Beam Search decoder (python interface)
+    temporary implementation that just calls a hello world kernel
 
-    args: 
-        log_probs: 
-            tensor of shape (batch_size, time_steps, vocab_size), containing 
-            log probabilities (i.e. log softmax output)
-            **should be on device for CUDA decoding**
-
-        input_lengths: 
-            int tensor of shape (batch_size,) containing correct length of each 
-            sequence in log_probs 
-
-        beam_width: 
-            int, number of hypotheses kept per time step 
-
-        blank_idx: 
-            int, index of CTC blank symbol 
-        
-        top_k:
-            int, number of hypotheses returned per element in batch
-
-    returns:  
-        hypotheses: 
-            tensor of shape (batch_size, top_k, max_decoded_length), with padding for 
-            hypotheses shorter than max_decoded_length 
-
-        scores:
-            tensor of shape (batch_size, top_k), containing log probability scores for each 
-            returned hypothesis
+    do input validation, 
     """
 
-    raise NotImplementedError
+    log_probs, input_lengths = _validate_inputs(log_probs, input_lengths)
+    ext = _load_ctc_extension()
+    ext.ctc_hello(log_probs, input_lengths)
+
+    batch, time, _ = log_probs.shape
+    max_decoded_length = time
+
+    hypotheses = torch.full(
+        (batch, top_k, max_decoded_length),
+        fill_value=blank_idx,
+        dtype=torch.int32,
+        device=log_probs.device,
+    )
+
+    scores = torch.full(
+        (batch, top_k),
+        fill_value=float("-inf"),
+        dtype=log_probs.dtype,
+        device=log_probs.device,
+    )
+
+    return hypotheses, scores
