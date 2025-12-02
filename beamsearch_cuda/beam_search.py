@@ -1,8 +1,9 @@
 from pathlib import Path
 from typing import Tuple
-
+import math
 import torch
 from torch.utils.cpp_extension import load
+
 
 _MODULE = None
 
@@ -80,6 +81,12 @@ class CTCBeamSearchDecoder:
         self.max_time = max_time
         self._ext = _load_ctc_extension()
 
+        batch_bits = math.ceil(math.log2(batch_size)) if batch_size > 1 else 1
+        hash_bits = 32 - batch_bits
+        
+        if hash_bits < 1:
+             raise ValueError(f"Batch size {batch_size} is too large to fit in 32-bit key with any hash bits left.")
+
         self.state_ptr = self._ext.create(
             batch_size,
             beam_width,
@@ -87,6 +94,8 @@ class CTCBeamSearchDecoder:
             max_time,
             max_output_length,
             blank_id,
+            batch_bits,
+            hash_bits,
         )
 
     def __del__(self):

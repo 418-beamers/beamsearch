@@ -9,7 +9,9 @@ struct CTCBeamSearchConfig {
     int num_classes;      
     int max_time;         
     int max_output_length; 
-    int blank_id;         
+    int blank_id;
+    int batch_bits;
+    int hash_bits;
 };
 
 struct CTCBeamSearchState {
