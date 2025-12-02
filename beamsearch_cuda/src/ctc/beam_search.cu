@@ -164,7 +164,7 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
             thrust::cuda::par.on(stream),
             thrust::device_ptr<int>(state_.unique_indices),
             thrust::device_ptr<int>(state_.unique_indices) + num_unique,
-            BatchScoreComp(state_.unique_keys, state_.unique_prob_total)
+            BatchScoreComp(state_.unique_keys, state_.unique_prob_total, config_.hash_bits)
         );
 
         ::top_k<<<config_.batch_size, 256, 0, stream>>>(

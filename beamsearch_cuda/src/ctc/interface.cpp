@@ -14,7 +14,9 @@ uintptr_t create(
     int num_classes,
     int max_time,
     int max_output_length,
-    int blank_id
+    int blank_id,
+    int batch_bits,
+    int hash_bits
 ) {
     CTCBeamSearchConfig config;
     config.batch_size = batch_size;
@@ -23,6 +25,8 @@ uintptr_t create(
     config.max_time = max_time;
     config.max_output_length = max_output_length;
     config.blank_id = blank_id;
+    config.batch_bits = batch_bits;
+    config.hash_bits = hash_bits;
 
     CTCBeamSearch* decoder = new CTCBeamSearch(config);
     return reinterpret_cast<uintptr_t>(decoder);

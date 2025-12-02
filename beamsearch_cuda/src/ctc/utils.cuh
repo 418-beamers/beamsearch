@@ -10,13 +10,15 @@
 struct BatchScoreComp {
     const unsigned int* keys;
     const float* scores;
+    int shift;
 
-    BatchScoreComp(const unsigned int* k, const float* s) : keys(k), scores(s) {}
+    BatchScoreComp(const unsigned int* k, const float* s, int shift_amount) 
+        : keys(k), scores(s), shift(shift_amount) {}
 
     __host__ __device__
     bool operator()(int a, int b) const {
-        int batchA = keys[a] >> 16; 
-        int batchB = keys[b] >> 16;
+        int batchA = keys[a] >> shift; 
+        int batchB = keys[b] >> shift;
         if (batchA != batchB) {
             return batchA < batchB;
         }
