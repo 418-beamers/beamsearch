@@ -23,17 +23,17 @@ struct CTCBeamSearchState {
     int* history_parents;    
     int* history_tokens;     
 
-    unsigned long long* cand_keys;   
+    unsigned int* cand_keys;   
     float* cand_prob_blank;
     float* cand_prob_non_blank;
     int* cand_parent_idx;     
     int* cand_token;         
     int* cand_last_token;     
     
-    unsigned long long* cand_keys_sorted;
+    unsigned int* cand_keys_sorted;
     int* cand_indices_sorted; 
 
-    unsigned long long* unique_keys;
+    unsigned int* unique_keys;
     float* unique_prob_blank;
     float* unique_prob_non_blank;
     float* unique_prob_total;

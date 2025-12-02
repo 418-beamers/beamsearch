@@ -77,8 +77,8 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
         
         thrust::sort_by_key(
             thrust::cuda::par.on(stream),
-            thrust::device_ptr<unsigned long long>(state_.cand_keys),
-            thrust::device_ptr<unsigned long long>(state_.cand_keys + num_candidates),
+            thrust::device_ptr<unsigned int>(state_.cand_keys),
+            thrust::device_ptr<unsigned int>(state_.cand_keys + num_candidates),
             thrust::device_ptr<int>(state_.cand_indices_sorted)
         );
 
@@ -106,16 +106,16 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
 
         auto new_end = thrust::reduce_by_key(
             thrust::cuda::par.on(stream),
-            thrust::device_ptr<unsigned long long>(state_.cand_keys),
-            thrust::device_ptr<unsigned long long>(state_.cand_keys + num_candidates),
+            thrust::device_ptr<unsigned int>(state_.cand_keys),
+            thrust::device_ptr<unsigned int>(state_.cand_keys + num_candidates),
             values_in,
-            thrust::device_ptr<unsigned long long>(state_.unique_keys),
+            thrust::device_ptr<unsigned int>(state_.unique_keys),
             values_out,
-            thrust::equal_to<unsigned long long>(),
+            thrust::equal_to<unsigned int>(),
             ProbAndIndexReduce()
         );
         
-        int num_unique = new_end.first - thrust::device_ptr<unsigned long long>(state_.unique_keys);
+        int num_unique = new_end.first - thrust::device_ptr<unsigned int>(state_.unique_keys);
 
         thrust::gather(
              thrust::cuda::par.on(stream),
@@ -194,17 +194,17 @@ cudaError_t CTCBeamSearch::allocate_state() {
     cudaMalloc(&state_.history_parents, config_.max_time * num_beams * sizeof(int));
     cudaMalloc(&state_.history_tokens, config_.max_time * num_beams * sizeof(int));
     
-    cudaMalloc(&state_.cand_keys, num_candidates * sizeof(unsigned long long));
+    cudaMalloc(&state_.cand_keys, num_candidates * sizeof(unsigned int));
     cudaMalloc(&state_.cand_prob_blank, num_candidates * sizeof(float));
     cudaMalloc(&state_.cand_prob_non_blank, num_candidates * sizeof(float));
     cudaMalloc(&state_.cand_parent_idx, num_candidates * sizeof(int));
     cudaMalloc(&state_.cand_token, num_candidates * sizeof(int));
     cudaMalloc(&state_.cand_last_token, num_candidates * sizeof(int));
     
-    cudaMalloc(&state_.cand_keys_sorted, num_candidates * sizeof(unsigned long long));
+    cudaMalloc(&state_.cand_keys_sorted, num_candidates * sizeof(unsigned int));
     cudaMalloc(&state_.cand_indices_sorted, num_candidates * sizeof(int));
     
-    cudaMalloc(&state_.unique_keys, num_candidates * sizeof(unsigned long long));
+    cudaMalloc(&state_.unique_keys, num_candidates * sizeof(unsigned int));
     cudaMalloc(&state_.unique_prob_blank, num_candidates * sizeof(float));
     cudaMalloc(&state_.unique_prob_non_blank, num_candidates * sizeof(float));
     cudaMalloc(&state_.unique_prob_total, num_candidates * sizeof(float));

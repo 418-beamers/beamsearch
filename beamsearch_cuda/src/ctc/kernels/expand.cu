@@ -23,7 +23,7 @@ __global__ void expand(
     float pNonBlank = state.prob_non_blank[flatBeamIdx];
     
     if (pBlank <= NEG_INF && pNonBlank <= NEG_INF) {
-        state.cand_keys[idx] = ULLONG_MAX; 
+        state.cand_keys[idx] = UINT_MAX; 
         state.cand_prob_blank[idx] = NEG_INF;
         state.cand_prob_non_blank[idx] = NEG_INF;
         return;
@@ -34,14 +34,15 @@ __global__ void expand(
     if (finished) {
         if (c == config.blank_id) {
              unsigned int hash = state.prefix_hashes[flatBeamIdx];
-             state.cand_keys[idx] = ((unsigned long long)batchIdx << 32) | hash;
+             // Combine batchIdx (16 bits) and hash (16 bits)
+             state.cand_keys[idx] = ((unsigned int)batchIdx << 16) | (hash & 0xFFFF);
              state.cand_prob_blank[idx] = pBlank;
              state.cand_prob_non_blank[idx] = pNonBlank;
              state.cand_parent_idx[idx] = beamIdx; 
              state.cand_token[idx] = -1; 
              state.cand_last_token[idx] = state.last_tokens[flatBeamIdx];
         } else {
-            state.cand_keys[idx] = ULLONG_MAX;
+            state.cand_keys[idx] = UINT_MAX;
             state.cand_prob_blank[idx] = NEG_INF;
             state.cand_prob_non_blank[idx] = NEG_INF;
         }
@@ -53,7 +54,7 @@ __global__ void expand(
     unsigned int oldHash = state.prefix_hashes[flatBeamIdx];
 
     if (c == config.blank_id) {
-        state.cand_keys[idx] = ((unsigned long long)batchIdx << 32) | oldHash;
+        state.cand_keys[idx] = ((unsigned int)batchIdx << 16) | (oldHash & 0xFFFF);
         state.cand_prob_blank[idx] = log_add_helper(pBlank, pNonBlank) + logProb;
         
         if (prevLastToken != -1) {
@@ -70,14 +71,14 @@ __global__ void expand(
         unsigned int newHash = oldHash * 33 + (c + 1);
         
         if (c == prevLastToken) {
-             state.cand_keys[idx] = ((unsigned long long)batchIdx << 32) | newHash;
+             state.cand_keys[idx] = ((unsigned int)batchIdx << 16) | (newHash & 0xFFFF);
              state.cand_prob_blank[idx] = NEG_INF;
              state.cand_prob_non_blank[idx] = pBlank + logProb;
              state.cand_parent_idx[idx] = beamIdx;
              state.cand_token[idx] = c;
              state.cand_last_token[idx] = c;
         } else {
-            state.cand_keys[idx] = ((unsigned long long)batchIdx << 32) | newHash;
+            state.cand_keys[idx] = ((unsigned int)batchIdx << 16) | (newHash & 0xFFFF);
             state.cand_prob_blank[idx] = NEG_INF;
             state.cand_prob_non_blank[idx] = log_add_helper(pBlank, pNonBlank) + logProb;
             state.cand_parent_idx[idx] = beamIdx;

@@ -8,15 +8,15 @@
 #define NEG_INF -1e20f
 
 struct BatchScoreComp {
-    const unsigned long long* keys;
+    const unsigned int* keys;
     const float* scores;
 
-    BatchScoreComp(const unsigned long long* k, const float* s) : keys(k), scores(s) {}
+    BatchScoreComp(const unsigned int* k, const float* s) : keys(k), scores(s) {}
 
     __host__ __device__
     bool operator()(int a, int b) const {
-        int batchA = (int)(keys[a] >> 32);
-        int batchB = (int)(keys[b] >> 32);
+        int batchA = keys[a] >> 16; 
+        int batchB = keys[b] >> 16;
         if (batchA != batchB) {
             return batchA < batchB;
         }
