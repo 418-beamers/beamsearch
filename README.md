@@ -70,7 +70,7 @@ python testing/ctc_decoder_test.py --batch-size 2
 Install the extension:
 
 ```bash
-pip install -e beamsearch_cuda/
+pip install -e beamsearch_cuda/ --no-build-isolation
 ```
 
 Run the tests:
