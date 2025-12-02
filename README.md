@@ -5,7 +5,7 @@ conda create -n beams python=3.10 -y
 conda activate beams
 python -m pip install --upgrade pip setuptools wheel ninja
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-python -m pip install flashlight-text
+python -m pip install flashlight-text rich
 ```
 
 Might also have to run these to add CUDA toolkit to path: 
@@ -15,7 +15,7 @@ export PATH=$CUDA_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 ```
 
-can run `python testing/env_test.py` to validate that the basic libraries necessary for the project are present
+can run `python testing/env_test.py` to validate that the basic libraries n     ecessary for the project are present
 
 # Interface
 Let: 
@@ -53,6 +53,8 @@ The `testing/ctc_decoder_test.py` script accepts several arguments to control th
 - `--top-k`: Number of top hypotheses to return (default: 3).
 - `--candidate-device`: Device to run the candidate decoder on (`cuda`). If not specified, only the reference decoder runs (on CPU).
 - `--seed`: Manual seed for reproducibility (default: 0).
+- `--timing-runs`: Number of timing repetitions per decoder (default: 3).
+- `--verbose`: Print decoded sequences and similarity metrics, in addition to the summary table.
 
 ### Example Usage
 
