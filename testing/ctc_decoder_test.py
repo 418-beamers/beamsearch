@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+import time
 
 import torch
 from torchaudio.models.decoder import ctc_decoder
@@ -164,7 +165,10 @@ def main():
     assert int(input_lengths_cpu.min()) > 0, input_lengths_cpu
     assert int(input_lengths_cpu.max()) <= T, (int(input_lengths_cpu.max()), T)
 
+    start_time = time.perf_counter()
     ref_output = decoder(emissions_cpu, input_lengths_cpu)
+    end_time = time.perf_counter()
+    print(f"Reference decoder execution time: {end_time - start_time:.4f} seconds")
 
     print("="*80)
     print("reference decoder outputs:")
@@ -199,23 +203,44 @@ def main():
 
     if (
         candidate_module
-        and hasattr(candidate_module, "ctc_beam_search")
+        and hasattr(candidate_module, "CTCBeamSearchDecoder")
         and candidate_device.type == "cuda"
     ):
 
-        candidate_fn = candidate_module.ctc_beam_search
+        CTCBeamSearchDecoder = candidate_module.CTCBeamSearchDecoder
 
         log_probs_candidate = log_probs_btv.to(candidate_device)
         input_lengths_candidate = input_lengths.to(device=candidate_device, dtype=torch.int32)
 
         try:
-            candidate_hypotheses, _ = candidate_fn(
+            candidate_decoder = CTCBeamSearchDecoder(
+                beam_width=args.beam_width,
+                num_classes=args.vocab_size,
+                max_output_length=args.time_steps,
+                blank_id=blank_idx,
+                batch_size=args.batch_size,
+                max_time=args.time_steps,
+            )
+
+            torch.cuda.synchronize()
+            start_time = time.perf_counter()
+
+            sequences, _, scores = candidate_decoder.decode(
                 log_probs=log_probs_candidate,
                 input_lengths=input_lengths_candidate,
-                beam_width=args.beam_width,
-                blank_idx=blank_idx,
-                top_k=args.top_k,
             )
+
+            sorted_indices = scores.argsort(dim=1, descending=True)
+            top_k_indices = sorted_indices[:, :args.top_k]
+            
+
+            B, Beam, L = sequences.shape
+            top_k_indices_expanded = top_k_indices.unsqueeze(2).expand(-1, -1, L)
+            candidate_hypotheses = sequences.gather(1, top_k_indices_expanded)
+
+            torch.cuda.synchronize()
+            end_time = time.perf_counter()
+            print(f"Candidate decoder execution time: {end_time - start_time:.4f} seconds")
 
         except NotImplementedError:
             print("candidate raised NotImplementedError, skip")
