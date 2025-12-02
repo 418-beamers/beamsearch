@@ -213,7 +213,6 @@ def main():
         input_lengths_candidate = input_lengths.to(device=candidate_device, dtype=torch.int32)
 
         try:
-            # Initialize decoder (excluded from timing)
             candidate_decoder = CTCBeamSearchDecoder(
                 beam_width=args.beam_width,
                 num_classes=args.vocab_size,
@@ -226,17 +225,14 @@ def main():
             torch.cuda.synchronize()
             start_time = time.perf_counter()
 
-            # Run decode
             sequences, _, scores = candidate_decoder.decode(
                 log_probs=log_probs_candidate,
                 input_lengths=input_lengths_candidate,
             )
 
-            # Post-processing (sorting to get top-k, matching ctc_beam_search helper)
             sorted_indices = scores.argsort(dim=1, descending=True)
             top_k_indices = sorted_indices[:, :args.top_k]
             
-            # top_scores = scores.gather(1, top_k_indices) # Not strictly needed for hypothesis text generation but part of full pipeline
 
             B, Beam, L = sequences.shape
             top_k_indices_expanded = top_k_indices.unsqueeze(2).expand(-1, -1, L)
