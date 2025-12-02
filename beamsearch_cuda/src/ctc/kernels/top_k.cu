@@ -17,7 +17,7 @@ __global__ void top_k(
     while (left < right) {
         int mid = left + (right - left) / 2;
         int actualIdx = state.unique_indices[mid];
-        int midBatch = static_cast<int>(state.unique_keys[actualIdx] >> 16);
+        int midBatch = static_cast<int>(state.unique_keys[actualIdx] >> config.hash_bits);
         
         if (midBatch < batchIdx) {
             left = mid + 1;
@@ -30,10 +30,12 @@ __global__ void top_k(
     bool batchFound = false;
     if (batchStart < num_unique) {
         int actualIdx = state.unique_indices[batchStart];
-        if (static_cast<int>(state.unique_keys[actualIdx] >> 16) == batchIdx) {
+        if (static_cast<int>(state.unique_keys[actualIdx] >> config.hash_bits) == batchIdx) {
             batchFound = true;
         }
     }
+
+    unsigned int mask = (1u << config.hash_bits) - 1;
 
     for (int k = threadIdx.x; k < config.beam_width; k += blockDim.x) {
         int globalBeamIdx = batchIdx * config.beam_width + k;
@@ -43,13 +45,13 @@ __global__ void top_k(
              int sortedIdx = batchStart + k;
              int uniqueIdx = state.unique_indices[sortedIdx];
              
-             if (static_cast<int>(state.unique_keys[uniqueIdx] >> 16) == batchIdx) {
+             if (static_cast<int>(state.unique_keys[uniqueIdx] >> config.hash_bits) == batchIdx) {
                 state.prob_blank[globalBeamIdx] = state.unique_prob_blank[uniqueIdx];
                 state.prob_non_blank[globalBeamIdx] = state.unique_prob_non_blank[uniqueIdx];
                 state.prob_total[globalBeamIdx] = state.unique_prob_total[uniqueIdx];
 
                 unsigned int key = state.unique_keys[uniqueIdx];
-                state.prefix_hashes[globalBeamIdx] = key & 0xFFFF;
+                state.prefix_hashes[globalBeamIdx] = key & mask;
                 state.last_tokens[globalBeamIdx] = state.unique_last_token[uniqueIdx];
 
                 int parent = state.unique_parent_idx[uniqueIdx];
