@@ -4,28 +4,32 @@ from typing import Tuple
 import torch
 from torch.utils.cpp_extension import load
 
-_CTC_EXTENSION = None
+_MODULE = None
 
 def _load_ctc_extension():
-    global _CTC_EXTENSION
+    global _MODULE
 
-    if _CTC_EXTENSION is None:
+    if _MODULE is None:
         base_dir = Path(__file__).resolve().parent
         src_dir = base_dir / "src" / "ctc"
 
         sources = [
-            src_dir / "binding.cpp",
-            src_dir / "ctc_beam_search_cuda.cu",
+            src_dir / "interface.cpp",
+            src_dir / "beam_search.cu",
+            src_dir / "kernels" / "initialize.cu",
+            src_dir / "kernels" / "expand.cu",
+            src_dir / "kernels" / "top_k.cu",
+            src_dir / "kernels" / "reconstruct.cu",
         ]
 
-        _CTC_EXTENSION = load(
+        _MODULE = load(
             name="beamsearch_cuda_native",
             sources=[str(path) for path in sources],
             extra_include_paths=[str(src_dir)],
             verbose=False,
         )
 
-    return _CTC_EXTENSION
+    return _MODULE
 
 
 def _prepare_input_lengths(input_lengths: torch.Tensor, batch_size: int, device: torch.device) -> torch.Tensor:
@@ -73,7 +77,7 @@ class CTCBeamSearchDecoder:
         self.max_time = max_time
         self._ext = _load_ctc_extension()
 
-        self.state_ptr = self._ext.create_ctc_beam_search_state(
+        self.state_ptr = self._ext.create(
             batch_size,
             beam_width,
             num_classes,
@@ -84,7 +88,7 @@ class CTCBeamSearchDecoder:
 
     def __del__(self):
         if hasattr(self, "state_ptr"):
-            self._ext.free_ctc_beam_search_state(self.state_ptr)
+            self._ext.free_state(self.state_ptr)
 
     def decode(
         self,
@@ -103,20 +107,10 @@ class CTCBeamSearchDecoder:
         if num_classes != self.num_classes:
             raise ValueError(f"num_classes mismatch: expected {self.num_classes}, got {num_classes}")
 
-        log_probs = log_probs.contiguous()
+        log_probs = log_probs.permute(1, 0, 2).contiguous()
         prepared_lengths = _prepare_input_lengths(input_lengths, batch_size, log_probs.device)
 
-        self._ext.initialize_ctc_beam_search(
-            self.state_ptr,
-            self.batch_size,
-            self.beam_width,
-            self.num_classes,
-            self.max_time,
-            self.max_output_length,
-            self.blank_id,
-        )
-
-        self._ext.run_ctc_beam_search(
+        return self._ext.decode(
             self.state_ptr,
             log_probs,
             self.batch_size,
@@ -127,27 +121,6 @@ class CTCBeamSearchDecoder:
             self.blank_id,
             prepared_lengths,
         )
-
-        sequences = self._ext.get_sequences(
-            self.state_ptr,
-            self.batch_size,
-            self.beam_width,
-            self.max_output_length,
-        )
-
-        lengths = self._ext.get_sequence_lengths(
-            self.state_ptr,
-            self.batch_size,
-            self.beam_width,
-        )
-
-        scores = self._ext.get_scores(
-            self.state_ptr,
-            self.batch_size,
-            self.beam_width,
-        )
-
-        return sequences, lengths, scores
 
     def decode_greedy(
         self,
@@ -208,8 +181,15 @@ def ctc_beam_search(
 
     sequences, _, scores = decoder.decode(log_probs, prepared_lengths)
 
-    hypotheses = sequences[:, :top_k, :]
-    top_scores = scores[:, :top_k]
+    sorted_indices = scores.argsort(dim=1, descending=True) 
+    
+    top_k_indices = sorted_indices[:, :top_k] 
+    
+    top_scores = scores.gather(1, top_k_indices)
+    
+    B, Beam, L = sequences.shape
+    top_k_indices_expanded = top_k_indices.unsqueeze(2).expand(-1, -1, L)
+    hypotheses = sequences.gather(1, top_k_indices_expanded)
     
     return hypotheses, top_scores
 
