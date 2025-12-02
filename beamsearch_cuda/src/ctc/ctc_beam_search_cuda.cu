@@ -1,339 +1,282 @@
 #include "ctc_beam_search_cuda_kernel.cuh"
 #include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-#include <float.h>
-#include <cub/cub.cuh>
-
-
-
-#define CUDA_CHECK(call) \
-    do { \
-        cudaError_t err = call; \
-        if (err != cudaSuccess) { \
-            fprintf(stderr, "CUDA error at %s:%d: %s\n", __FILE__, __LINE__, \
-                    cudaGetErrorString(err)); \
-            exit(EXIT_FAILURE); \
-        } \
-    } while(0)
+#include <thrust/device_ptr.h>
+#include <thrust/sort.h>
+#include <thrust/reduce.h>
+#include <thrust/execution_policy.h>
+#include <thrust/iterator/zip_iterator.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/tuple.h>
+#include <thrust/unique.h>
+#include <thrust/gather.h>
 
 #define NEG_INF -1e20f
 
-__device__ __forceinline__ float logAdd(float a, float b) {
-    if (a == NEG_INF) return b;
-    if (b == NEG_INF) return a;
+__host__ __device__ __forceinline__ float logAdd(float a, float b) {
+    if (a <= NEG_INF) return b;
+    if (b <= NEG_INF) return a;
     float maxVal = fmaxf(a, b);
     return maxVal + log1pf(expf(-fabsf(a - b)));
 }
 
+struct ProbZipReduce {
+    __host__ __device__
+    thrust::tuple<float, float> operator()(const thrust::tuple<float, float>& a,
+                                           const thrust::tuple<float, float>& b) const {
+        float a_pb  = thrust::get<0>(a);
+        float a_pnb = thrust::get<1>(a);
+        float b_pb  = thrust::get<0>(b);
+        float b_pnb = thrust::get<1>(b);
+        return thrust::make_tuple(logAdd(a_pb, b_pb), logAdd(a_pnb, b_pnb));
+    }
+};
+
+struct CalcTotalProb {
+    __host__ __device__
+    float operator()(const thrust::tuple<float, float>& t) const {
+        float pb  = thrust::get<0>(t);
+        float pnb = thrust::get<1>(t);
+        return logAdd(pb, pnb);
+    }
+};
 
 __global__ void initializeCTCBeamSearchKernel(
-    int* prefixes,
-    int* prefixLengths,
     float* probBlank,
     float* probNonBlank,
     float* probTotal,
+    unsigned long long* prefixHashes,
+    int* currentLengths,
+    int* lastTokens,
     int batchSize,
     int beamWidth,
-    int maxOutputLength
-) {
-    int batchIdx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (batchIdx >= batchSize) return;
-
-    for (int k = 0; k < beamWidth; k++) {
-        int beamIdx = batchIdx * beamWidth + k;
-
-        prefixLengths[beamIdx] = 0;
-
-        if (k == 0) {
-            probBlank[beamIdx] = 0.0f;      
-            probNonBlank[beamIdx] = NEG_INF;
-            probTotal[beamIdx] = 0.0f;
-        } else {
-            probBlank[beamIdx] = NEG_INF;
-            probNonBlank[beamIdx] = NEG_INF;
-            probTotal[beamIdx] = NEG_INF;
-        }
-
-        for (int i = 0; i < maxOutputLength; i++) {
-            prefixes[beamIdx * maxOutputLength + i] = -1;
-        }
-    }
-}
-
-
-__global__ void expandCTCBeamsKernel(
-    const int* prefixes,
-    const int* prefixLengths,
-    const float* probBlank,
-    const float* probNonBlank,
-    const float* logProbs,
-    int* nextPrefixes,
-    int* nextPrefixLengths,
-    int* nextLabels,
-    float* nextProbBlank,
-    float* nextProbNonBlank,
-    float* nextProbTotal,
-    int batchSize,
-    int beamWidth,
-    int numClasses,
-    int maxOutputLength,
-    int blankId,
-    int timeStep,
-    int maxTime
+    int blankId
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int totalBeams = batchSize * beamWidth;
+    if (idx >= batchSize * beamWidth) return;
 
-    if (idx >= totalBeams) return;
-
-    int batchIdx = idx / beamWidth;
     int beamIdx = idx % beamWidth;
-    int inputBeamIdx = batchIdx * beamWidth + beamIdx;
 
-    int logProbOffset = (batchIdx * maxTime + timeStep) * numClasses;
-
-    float prefixProbBlank = probBlank[inputBeamIdx];
-    float prefixProbNonBlank = probNonBlank[inputBeamIdx];
-    int prefixLen = prefixLengths[inputBeamIdx];
-
-    if (prefixProbBlank == NEG_INF && prefixProbNonBlank == NEG_INF) {
-        return;
-    }
-
-    int lastChar = (prefixLen > 0) ?
-        prefixes[inputBeamIdx * maxOutputLength + prefixLen - 1] : -1;
-
-    int outputBaseIdx = batchIdx * beamWidth * (numClasses + 1) + beamIdx * (numClasses + 1);
-
-    {
-        int outIdx = outputBaseIdx;
-        float logProbBlankToken = logProbs[logProbOffset + blankId];
-
-        nextProbBlank[outIdx] = logAdd(prefixProbBlank, prefixProbNonBlank) + logProbBlankToken;
-        nextProbNonBlank[outIdx] = NEG_INF;
-        nextProbTotal[outIdx] = nextProbBlank[outIdx];
-        nextPrefixLengths[outIdx] = prefixLen;
-        nextLabels[outIdx] = -1; 
-
-        for (int i = 0; i < prefixLen && i < maxOutputLength; i++) {
-            nextPrefixes[outIdx * maxOutputLength + i] =
-                prefixes[inputBeamIdx * maxOutputLength + i];
-        }
-    }
-
-    for (int c = 0; c < numClasses; c++) {
-        if (c == blankId) continue;
-
-        int outIdx = outputBaseIdx + 1 + ((c < blankId) ? c : c - 1);
-        float logProbC = logProbs[logProbOffset + c];
-
-        for (int i = 0; i < prefixLen && i < maxOutputLength; i++) {
-            nextPrefixes[outIdx * maxOutputLength + i] =
-                prefixes[inputBeamIdx * maxOutputLength + i];
-        }
-
-        if (c == lastChar) {
-            nextProbBlank[outIdx] = NEG_INF;
-            nextProbNonBlank[outIdx] = prefixProbBlank + logProbC;
-            nextProbTotal[outIdx] = nextProbNonBlank[outIdx];
-
-            if (prefixLen < maxOutputLength) {
-                nextPrefixes[outIdx * maxOutputLength + prefixLen] = c;
-                nextPrefixLengths[outIdx] = prefixLen + 1;
-            } else {
-                nextPrefixLengths[outIdx] = prefixLen;
-            }
-            nextLabels[outIdx] = c;
-
-        } else {
-            nextProbBlank[outIdx] = NEG_INF;
-            nextProbNonBlank[outIdx] = logAdd(prefixProbBlank, prefixProbNonBlank) + logProbC;
-            nextProbTotal[outIdx] = nextProbNonBlank[outIdx];
-
-            if (prefixLen < maxOutputLength) {
-                nextPrefixes[outIdx * maxOutputLength + prefixLen] = c;
-                nextPrefixLengths[outIdx] = prefixLen + 1;
-            } else {
-                nextPrefixLengths[outIdx] = prefixLen;
-            }
-            nextLabels[outIdx] = c;
-        }
+    if (beamIdx == 0) {
+        probBlank[idx] = 0.0f; 
+        probNonBlank[idx] = NEG_INF;
+        probTotal[idx] = 0.0f;
+        prefixHashes[idx] = 0; 
+        currentLengths[idx] = 0;
+        lastTokens[idx] = -1; 
+    } else {
+        probBlank[idx] = NEG_INF;
+        probNonBlank[idx] = NEG_INF;
+        probTotal[idx] = NEG_INF;
+        prefixHashes[idx] = 0;
+        currentLengths[idx] = 0;
+        lastTokens[idx] = -1;
     }
 }
 
-
-__global__ void mergePrefixesKernel(
-    const int* nextPrefixes,
-    const int* nextPrefixLengths,
-    const float* nextProbBlank,
-    const float* nextProbNonBlank,
-    const float* nextProbTotal,
-    int* mergedPrefixes,
-    int* mergedPrefixLengths,
-    float* mergedProbBlank,
-    float* mergedProbNonBlank,
-    float* mergedProbTotal,
-    int batchSize,
-    int beamWidth,
-    int numClasses,
-    int maxOutputLength
-) {
-    int batchIdx = blockIdx.x;
-    if (batchIdx >= batchSize) return;
-
-    int numCandidates = beamWidth * (numClasses + 1);
-    int candidateOffset = batchIdx * numCandidates;
-
-    extern __shared__ char sharedMem[];
-    int* processedMask = (int*)sharedMem;
-
-    for (int i = threadIdx.x; i < numCandidates; i += blockDim.x) {
-        processedMask[i] = 0;
-    }
-    __syncthreads();
-
-    for (int candIdx = threadIdx.x; candIdx < numCandidates; candIdx += blockDim.x) {
-        int globalCandIdx = candidateOffset + candIdx;
-
-        if (atomicCAS(&processedMask[candIdx], 0, 1) != 0) {
-            continue;
-        }
-
-        int prefixLen = nextPrefixLengths[globalCandIdx];
-        float mergedPb = nextProbBlank[globalCandIdx];
-        float mergedPnb = nextProbNonBlank[globalCandIdx];
-
-        for (int otherIdx = candIdx + 1; otherIdx < numCandidates; otherIdx++) {
-            if (processedMask[otherIdx] != 0) continue;
-
-            int globalOtherIdx = candidateOffset + otherIdx;
-            int otherLen = nextPrefixLengths[globalOtherIdx];
-
-            if (otherLen != prefixLen) continue;
-
-            bool match = true;
-            for (int i = 0; i < prefixLen; i++) {
-                if (nextPrefixes[globalCandIdx * maxOutputLength + i] !=
-                    nextPrefixes[globalOtherIdx * maxOutputLength + i]) {
-                    match = false;
-                    break;
-                }
-            }
-
-            if (match) {
-                mergedPb = logAdd(mergedPb, nextProbBlank[globalOtherIdx]);
-                mergedPnb = logAdd(mergedPnb, nextProbNonBlank[globalOtherIdx]);
-                atomicExch(&processedMask[otherIdx], 1);
-            }
-        }
-
-        mergedProbBlank[globalCandIdx] = mergedPb;
-        mergedProbNonBlank[globalCandIdx] = mergedPnb;
-        mergedProbTotal[globalCandIdx] = logAdd(mergedPb, mergedPnb);
-        mergedPrefixLengths[globalCandIdx] = prefixLen;
-
-        for (int i = 0; i < prefixLen; i++) {
-            mergedPrefixes[globalCandIdx * maxOutputLength + i] =
-                nextPrefixes[globalCandIdx * maxOutputLength + i];
-        }
-    }
-}
-
-
-__global__ void selectTopKBeamsKernel(
-    const int* candidatePrefixes,
-    const int* candidatePrefixLengths,
-    const float* candidateProbBlank,
-    const float* candidateProbNonBlank,
-    const float* candidateProbTotal,
-    int* outputPrefixes,
-    int* outputPrefixLengths,
-    float* outputProbBlank,
-    float* outputProbNonBlank,
-    float* outputProbTotal,
-    int batchSize,
-    int beamWidth,
-    int numClasses,
-    int maxOutputLength
-) {
-    int batchIdx = blockIdx.x;
-    if (batchIdx >= batchSize) return;
-
-    int numCandidates = beamWidth * (numClasses + 1);
-    int candidateOffset = batchIdx * numCandidates;
-
-    extern __shared__ char sharedMem[];
-    float* topScores = (float*)sharedMem;
-    int* topIndices = (int*)&topScores[beamWidth];
-
-    if (threadIdx.x < beamWidth) {
-        int candIdx = candidateOffset + threadIdx.x;
-        topScores[threadIdx.x] = candidateProbTotal[candIdx];
-        topIndices[threadIdx.x] = threadIdx.x;
-    }
-    __syncthreads();
-
-    for (int candIdx = beamWidth + threadIdx.x; candIdx < numCandidates; candIdx += blockDim.x) {
-        int globalCandIdx = candidateOffset + candIdx;
-        float score = candidateProbTotal[globalCandIdx];
-
-        float minScore = topScores[0];
-        int minPos = 0;
-        for (int k = 1; k < beamWidth; k++) {
-            if (topScores[k] < minScore) {
-                minScore = topScores[k];
-                minPos = k;
-            }
-        }
-
-        if (score > minScore) {
-            atomicExch((int*)&topScores[minPos], __float_as_int(score));
-            atomicExch(&topIndices[minPos], candIdx - candidateOffset);
-        }
-    }
-    __syncthreads();
-
-    if (threadIdx.x < beamWidth) {
-        int selectedIdx = candidateOffset + topIndices[threadIdx.x];
-        int outputIdx = batchIdx * beamWidth + threadIdx.x;
-
-        outputProbBlank[outputIdx] = candidateProbBlank[selectedIdx];
-        outputProbNonBlank[outputIdx] = candidateProbNonBlank[selectedIdx];
-        outputProbTotal[outputIdx] = candidateProbTotal[selectedIdx];
-        outputPrefixLengths[outputIdx] = candidatePrefixLengths[selectedIdx];
-
-        int prefixLen = candidatePrefixLengths[selectedIdx];
-        for (int i = 0; i < prefixLen && i < maxOutputLength; i++) {
-            outputPrefixes[outputIdx * maxOutputLength + i] =
-                candidatePrefixes[selectedIdx * maxOutputLength + i];
-        }
-        for (int i = prefixLen; i < maxOutputLength; i++) {
-            outputPrefixes[outputIdx * maxOutputLength + i] = -1;
-        }
-    }
-}
-
-
+// Host wrapper for initialization kernel
 void launchInitializeCTCBeamSearch(
     CTCBeamSearchState& state,
     const CTCBeamSearchConfig& config,
     cudaStream_t stream
 ) {
-    int threadsPerBlock = 256;
-    int numBlocks = (config.batchSize + threadsPerBlock - 1) / threadsPerBlock;
+    int numBeams = config.batchSize * config.beamWidth;
+    int threads = 256;
+    int blocks = (numBeams + threads - 1) / threads;
 
-    initializeCTCBeamSearchKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
-        state.prefixes,
-        state.prefixLengths,
+    initializeCTCBeamSearchKernel<<<blocks, threads, 0, stream>>>(
         state.probBlank,
         state.probNonBlank,
         state.probTotal,
+        state.prefixHashes,
+        state.currentLengths,
+        state.lastTokens,
         config.batchSize,
         config.beamWidth,
-        config.maxOutputLength
+        config.blankId
     );
+}
 
-    CUDA_CHECK(cudaGetLastError());
+__global__ void expandCTCBeamsParallelKernel(
+    const float* probBlank,
+    const float* probNonBlank,
+    const unsigned long long* prefixHashes,
+    const int* lastTokens,
+    const float* logProbs, 
+    const int* inputLengths,
+    unsigned long long* candKeys,
+    float* candProbBlank,
+    float* candProbNonBlank,
+    int* candParentIdx,
+    int* candToken,
+    int* candLastToken,
+    int batchSize,
+    int beamWidth,
+    int numClasses,
+    int blankId,
+    int timeStep
+) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int totalCandidates = batchSize * beamWidth * numClasses;
+    
+    if (idx >= totalCandidates) return;
+
+    int c = idx % numClasses;
+    int temp = idx / numClasses;
+    int beamIdx = temp % beamWidth;
+    int batchIdx = temp / beamWidth;
+    int flatBeamIdx = batchIdx * beamWidth + beamIdx;
+    
+    float pBlank = probBlank[flatBeamIdx];
+    float pNonBlank = probNonBlank[flatBeamIdx];
+    
+    if (pBlank <= NEG_INF && pNonBlank <= NEG_INF) {
+        candKeys[idx] = ULLONG_MAX; 
+        candProbBlank[idx] = NEG_INF;
+        candProbNonBlank[idx] = NEG_INF;
+        return;
+    }
+
+    bool finished = (inputLengths != nullptr && timeStep >= inputLengths[batchIdx]);
+
+    if (finished) {
+        if (c == blankId) {
+             unsigned long long hash = prefixHashes[flatBeamIdx];
+             candKeys[idx] = ((unsigned long long)batchIdx << 32) | (hash & 0xFFFFFFFF);
+             candProbBlank[idx] = pBlank;
+             candProbNonBlank[idx] = pNonBlank;
+             candParentIdx[idx] = beamIdx; 
+             candToken[idx] = -1; // blank, do not emit
+             candLastToken[idx] = lastTokens[flatBeamIdx];
+        } else {
+            candKeys[idx] = ULLONG_MAX;
+            candProbBlank[idx] = NEG_INF;
+            candProbNonBlank[idx] = NEG_INF;
+        }
+        return;
+    }
+
+    float logProb = logProbs[(batchIdx * numClasses) + c]; 
+    int prevLastToken = lastTokens[flatBeamIdx];
+    unsigned long long oldHash = prefixHashes[flatBeamIdx];
+
+    if (c == blankId) {
+        candKeys[idx] = ((unsigned long long)batchIdx << 32) | (oldHash & 0xFFFFFFFF);
+        candProbBlank[idx] = logAdd(pBlank, pNonBlank) + logProb;
+        
+        if (prevLastToken != -1) {
+             float logProbPrev = logProbs[(batchIdx * numClasses) + prevLastToken];
+             candProbNonBlank[idx] = pNonBlank + logProbPrev; 
+        } else {
+             candProbNonBlank[idx] = NEG_INF;
+        }
+
+        candParentIdx[idx] = beamIdx;
+        candToken[idx] = -1; // blank, do not emit
+        candLastToken[idx] = prevLastToken;
+    } else {
+        unsigned long long newHash = oldHash * 33 + (c + 1);
+        
+        if (c == prevLastToken) {
+             candKeys[idx] = ((unsigned long long)batchIdx << 32) | (newHash & 0xFFFFFFFF);
+             candProbBlank[idx] = NEG_INF;
+             candProbNonBlank[idx] = pBlank + logProb;
+             candParentIdx[idx] = beamIdx;
+             candToken[idx] = c;
+             candLastToken[idx] = c;
+        } else {
+            candKeys[idx] = ((unsigned long long)batchIdx << 32) | (newHash & 0xFFFFFFFF);
+            candProbBlank[idx] = NEG_INF;
+            candProbNonBlank[idx] = logAdd(pBlank, pNonBlank) + logProb;
+            candParentIdx[idx] = beamIdx;
+            candToken[idx] = c;
+            candLastToken[idx] = c;
+        }
+    }
+}
+
+__global__ void updateHistoryKernel(
+    const int* uniqueParentIdx,
+    const int* uniqueToken,
+    const int* uniqueLastToken,
+    const float* uniqueProbBlank,
+    const float* uniqueProbNonBlank,
+    const float* uniqueProbTotal,
+    const unsigned long long* uniqueKeys,
+    int numUnique,
+    int* historyParents,
+    int* historyTokens,
+    float* probBlank,
+    float* probNonBlank,
+    float* probTotal,
+    unsigned long long* prefixHashes,
+    int* lastTokens,
+    int batchSize,
+    int beamWidth,
+    int timeStep,
+    int maxTime
+) {
+    int batchIdx = blockIdx.x;
+    if (batchIdx >= batchSize) return;
+
+    extern __shared__ unsigned char smem[];
+    float* topScores = reinterpret_cast<float*>(smem);
+    int* topIndices = reinterpret_cast<int*>(topScores + beamWidth);
+
+    if (threadIdx.x == 0) {
+        for (int k = 0; k < beamWidth; ++k) {
+            topScores[k] = NEG_INF;
+            topIndices[k] = -1;
+        }
+
+        for (int i = 0; i < numUnique; ++i) {
+            unsigned long long key = uniqueKeys[i];
+            int candBatch = static_cast<int>(key >> 32);
+            if (candBatch != batchIdx) continue;
+
+            float score = uniqueProbTotal[i];
+
+            // Find current worst in top-K
+            int minPos = 0;
+            float minScore = topScores[0];
+            for (int k = 1; k < beamWidth; ++k) {
+                if (topScores[k] < minScore) {
+                    minScore = topScores[k];
+                    minPos = k;
+                }
+            }
+
+            if (score > minScore) {
+                topScores[minPos] = score;
+                topIndices[minPos] = i;
+            }
+        }
+
+        for (int k = 0; k < beamWidth; ++k) {
+            int sel = topIndices[k];
+            int globalBeamIdx = batchIdx * beamWidth + k;
+
+            if (sel >= 0) {
+                probBlank[globalBeamIdx] = uniqueProbBlank[sel];
+                probNonBlank[globalBeamIdx] = uniqueProbNonBlank[sel];
+                probTotal[globalBeamIdx] = uniqueProbTotal[sel];
+
+                unsigned long long key = uniqueKeys[sel];
+                prefixHashes[globalBeamIdx] = key & 0xFFFFFFFFULL;
+                lastTokens[globalBeamIdx] = uniqueLastToken[sel];
+
+                int parent = uniqueParentIdx[sel];
+                int token = uniqueToken[sel];
+
+                int histIdx = timeStep * batchSize * beamWidth + globalBeamIdx;
+                historyParents[histIdx] = parent;
+                historyTokens[histIdx] = token;
+            } else {
+                probBlank[globalBeamIdx] = NEG_INF;
+                probNonBlank[globalBeamIdx] = NEG_INF;
+                probTotal[globalBeamIdx] = NEG_INF;
+            }
+        }
+    }
 }
 
 void launchCTCBeamSearch(
@@ -343,138 +286,250 @@ void launchCTCBeamSearch(
     const int* inputLengths,
     cudaStream_t stream
 ) {
-    int threadsPerBlock = 256;
+    int numBeams = config.batchSize * config.beamWidth;
+    int numCandidates = numBeams * config.numClasses;
+    
+    int threads = 256;
+    int blocks = (numBeams + threads - 1) / threads;
+    initializeCTCBeamSearchKernel<<<blocks, threads, 0, stream>>>(
+        state.probBlank, state.probNonBlank, state.probTotal,
+        state.prefixHashes, state.currentLengths, state.lastTokens,
+        config.batchSize, config.beamWidth, config.blankId
+    );
 
-    for (int t = 0; t < config.maxTime; t++) {
-        // Step 1: Expand beams
-        int totalBeams = config.batchSize * config.beamWidth;
-        int numBlocks = (totalBeams + threadsPerBlock - 1) / threadsPerBlock;
-
-        expandCTCBeamsKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
-            state.prefixes,
-            state.prefixLengths,
-            state.probBlank,
-            state.probNonBlank,
-            logProbs,
-            state.nextPrefixes,
-            state.nextPrefixLengths,
-            state.nextLabels,
-            state.nextProbBlank,
-            state.nextProbNonBlank,
-            state.nextProbTotal,
-            config.batchSize,
-            config.beamWidth,
-            config.numClasses,
-            config.maxOutputLength,
-            config.blankId,
-            t,
-            config.maxTime
+    for (int t = 0; t < config.maxTime; ++t) {
+        int expBlocks = (numCandidates + threads - 1) / threads;
+        expandCTCBeamsParallelKernel<<<expBlocks, threads, 0, stream>>>(
+            state.probBlank, state.probNonBlank, state.prefixHashes, state.lastTokens,
+            logProbs + (long long)t * config.batchSize * config.numClasses,
+            inputLengths,
+            state.candKeys, state.candProbBlank, state.candProbNonBlank,
+            state.candParentIdx, state.candToken, state.candLastToken,
+            config.batchSize, config.beamWidth, config.numClasses, config.blankId, t
         );
-        CUDA_CHECK(cudaGetLastError());
 
-        // Step 2: Merge duplicate prefixes
-        int sharedMemSize = config.beamWidth * (config.numClasses + 1) * sizeof(int);
-
-        mergePrefixesKernel<<<config.batchSize, threadsPerBlock, sharedMemSize, stream>>>(
-            state.nextPrefixes,
-            state.nextPrefixLengths,
-            state.nextProbBlank,
-            state.nextProbNonBlank,
-            state.nextProbTotal,
-            state.nextPrefixes,      
-            state.nextPrefixLengths, 
-            state.nextProbBlank,     
-            state.nextProbNonBlank,  
-            state.nextProbTotal,     
-            config.batchSize,
-            config.beamWidth,
-            config.numClasses,
-            config.maxOutputLength
+        thrust::counting_iterator<int> iter(0);
+        thrust::copy(thrust::cuda::par.on(stream), iter, iter + numCandidates, state.candIndicesSorted);
+        
+        thrust::sort_by_key(
+            thrust::cuda::par.on(stream),
+            thrust::device_ptr<unsigned long long>(state.candKeys),
+            thrust::device_ptr<unsigned long long>(state.candKeys + numCandidates),
+            thrust::device_ptr<int>(state.candIndicesSorted)
         );
-        CUDA_CHECK(cudaGetLastError());
 
-        // Step 3: Select top-k beams
-        sharedMemSize = config.beamWidth * (sizeof(float) + sizeof(int));
-
-        selectTopKBeamsKernel<<<config.batchSize, threadsPerBlock, sharedMemSize, stream>>>(
-            state.nextPrefixes,
-            state.nextPrefixLengths,
-            state.nextProbBlank,
-            state.nextProbNonBlank,
-            state.nextProbTotal,
-            state.prefixes,
-            state.prefixLengths,
-            state.probBlank,
-            state.probNonBlank,
-            state.probTotal,
-            config.batchSize,
-            config.beamWidth,
-            config.numClasses,
-            config.maxOutputLength
+        auto prob_zip = thrust::make_zip_iterator(thrust::make_tuple(
+            thrust::device_ptr<float>(state.candProbBlank),
+            thrust::device_ptr<float>(state.candProbNonBlank)
+        ));
+        
+        auto permuted_probs = thrust::make_permutation_iterator(
+            prob_zip,
+            thrust::device_ptr<int>(state.candIndicesSorted)
         );
-        CUDA_CHECK(cudaGetLastError());
+
+        auto unique_prob_zip = thrust::make_zip_iterator(thrust::make_tuple(
+            thrust::device_ptr<float>(state.uniqueProbBlank),
+            thrust::device_ptr<float>(state.uniqueProbNonBlank)
+        ));
+
+        auto new_end = thrust::reduce_by_key(
+            thrust::cuda::par.on(stream),
+            thrust::device_ptr<unsigned long long>(state.candKeys),
+            thrust::device_ptr<unsigned long long>(state.candKeys + numCandidates),
+            permuted_probs,
+            thrust::device_ptr<unsigned long long>(state.uniqueKeys),
+            unique_prob_zip,
+            thrust::equal_to<unsigned long long>(),
+            ProbZipReduce()
+        );
+        
+        int numUnique = new_end.first - thrust::device_ptr<unsigned long long>(state.uniqueKeys);
+
+        thrust::counting_iterator<int> idx_it(0);
+        thrust::copy(thrust::cuda::par.on(stream),
+                     idx_it,
+                     idx_it + numCandidates,
+                     state.candIndicesSorted);
+
+        auto unique_end_idx = thrust::unique_by_key(
+            thrust::cuda::par.on(stream),
+            thrust::device_ptr<unsigned long long>(state.candKeys),
+            thrust::device_ptr<unsigned long long>(state.candKeys + numCandidates),
+            thrust::device_ptr<int>(state.candIndicesSorted)
+        );
+
+        thrust::gather(
+             thrust::cuda::par.on(stream),
+             thrust::device_ptr<int>(state.candIndicesSorted),
+             thrust::device_ptr<int>(state.candIndicesSorted) + numUnique,
+             thrust::device_ptr<int>(state.candToken),
+             thrust::device_ptr<int>(state.uniqueToken)
+        );
+
+        thrust::gather(
+             thrust::cuda::par.on(stream),
+             thrust::device_ptr<int>(state.candIndicesSorted),
+             thrust::device_ptr<int>(state.candIndicesSorted) + numUnique,
+             thrust::device_ptr<int>(state.candLastToken),
+             thrust::device_ptr<int>(state.uniqueLastToken)
+        );
+        
+        thrust::gather(
+             thrust::cuda::par.on(stream),
+             thrust::device_ptr<int>(state.candIndicesSorted),
+             thrust::device_ptr<int>(state.candIndicesSorted) + numUnique,
+             thrust::device_ptr<int>(state.candParentIdx),
+             thrust::device_ptr<int>(state.uniqueParentIdx) 
+        );
+
+        thrust::transform(
+            thrust::cuda::par.on(stream),
+            unique_prob_zip,
+            unique_prob_zip + numUnique,
+            thrust::device_ptr<float>(state.uniqueProbTotal),
+            CalcTotalProb()
+        );
+
+        size_t sharedMemSize = static_cast<size_t>(config.beamWidth) *
+                               (sizeof(float) + sizeof(int));
+        updateHistoryKernel<<<config.batchSize, 1, sharedMemSize, stream>>>(
+            state.uniqueParentIdx, state.uniqueToken, state.uniqueLastToken,
+            state.uniqueProbBlank, state.uniqueProbNonBlank, state.uniqueProbTotal,
+            state.uniqueKeys, numUnique,
+            state.historyParents, state.historyTokens,
+            state.probBlank, state.probNonBlank, state.probTotal,
+            state.prefixHashes, state.lastTokens,
+            config.batchSize, config.beamWidth, t, config.maxTime
+        );
     }
+
+    cudaMemcpyAsync(state.outputScores, state.probTotal, 
+                    numBeams * sizeof(float), cudaMemcpyDeviceToDevice, stream);
 }
 
-cudaError_t allocateCTCBeamSearchState(
-    CTCBeamSearchState& state,
-    const CTCBeamSearchConfig& config
+__global__ void reconstructSequencesKernel(
+    const int* historyParents,
+    const int* historyTokens,
+    int* outputSequences,
+    int* outputLengths,
+    int batchSize,
+    int beamWidth,
+    int maxTime,
+    int maxOutputLength,
+    int blankId
 ) {
-    cudaError_t err;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= batchSize * beamWidth) return;
 
+    int beamIdx = idx % beamWidth;
+    int batchIdx = idx / beamWidth;
+    
+    int currentBeam = beamIdx;
+    int len = 0;
+    int* myOutput = outputSequences + (batchIdx * beamWidth + beamIdx) * maxOutputLength;
+    
+    for (int t = maxTime - 1; t >= 0; t--) {
+        int histIdx = t * batchSize * beamWidth + batchIdx * beamWidth + currentBeam;
+        int token = historyTokens[histIdx];
+        int parent = historyParents[histIdx];
+        
+        if (token != -1 && token != blankId) { 
+             if (len < maxOutputLength) {
+                 myOutput[len++] = token;
+             }
+        }
+        currentBeam = parent;
+        if (currentBeam < 0) break; 
+    }
+    
+    for (int i = 0; i < len / 2; i++) {
+        int tmp = myOutput[i];
+        myOutput[i] = myOutput[len - 1 - i];
+        myOutput[len - 1 - i] = tmp;
+    }
+    
+    for (int i = len; i < maxOutputLength; i++) {
+        myOutput[i] = -1;
+    }
+    
+    outputLengths[idx] = len;
+}
+
+void launchReconstructSequences(CTCBeamSearchState& state, const CTCBeamSearchConfig& config, cudaStream_t stream) {
     int numBeams = config.batchSize * config.beamWidth;
-    int numCandidates = config.batchSize * config.beamWidth * (config.numClasses + 1);
+    reconstructSequencesKernel<<<(numBeams+255)/256, 256, 0, stream>>>(
+        state.historyParents, state.historyTokens,
+        state.outputSequences, state.outputLengths,
+        config.batchSize, config.beamWidth, config.maxTime, config.maxOutputLength,
+        config.blankId
+    );
+}
 
-    err = cudaMalloc(&state.prefixes, numBeams * config.maxOutputLength * sizeof(int));
-    if (err != cudaSuccess) return err;
-
-    err = cudaMalloc(&state.prefixLengths, numBeams * sizeof(int));
-    if (err != cudaSuccess) return err;
-
-    err = cudaMalloc(&state.probBlank, numBeams * sizeof(float));
-    if (err != cudaSuccess) return err;
-
-    err = cudaMalloc(&state.probNonBlank, numBeams * sizeof(float));
-    if (err != cudaSuccess) return err;
-
-    err = cudaMalloc(&state.probTotal, numBeams * sizeof(float));
-    if (err != cudaSuccess) return err;
-
-    err = cudaMalloc(&state.nextPrefixes, numCandidates * config.maxOutputLength * sizeof(int));
-    if (err != cudaSuccess) return err;
-
-    err = cudaMalloc(&state.nextPrefixLengths, numCandidates * sizeof(int));
-    if (err != cudaSuccess) return err;
-
-    err = cudaMalloc(&state.nextLabels, numCandidates * sizeof(int));
-    if (err != cudaSuccess) return err;
-
-    err = cudaMalloc(&state.nextProbBlank, numCandidates * sizeof(float));
-    if (err != cudaSuccess) return err;
-
-    err = cudaMalloc(&state.nextProbNonBlank, numCandidates * sizeof(float));
-    if (err != cudaSuccess) return err;
-
-    err = cudaMalloc(&state.nextProbTotal, numCandidates * sizeof(float));
-    if (err != cudaSuccess) return err;
-
-    err = cudaMalloc(&state.sortedIndices, numCandidates * sizeof(int));
-    if (err != cudaSuccess) return err;
-
+cudaError_t allocateCTCBeamSearchState(CTCBeamSearchState& state, const CTCBeamSearchConfig& config) {
+    int numBeams = config.batchSize * config.beamWidth;
+    int numCandidates = numBeams * config.numClasses;
+    
+    cudaMalloc(&state.probBlank, numBeams * sizeof(float));
+    cudaMalloc(&state.probNonBlank, numBeams * sizeof(float));
+    cudaMalloc(&state.probTotal, numBeams * sizeof(float));
+    cudaMalloc(&state.prefixHashes, numBeams * sizeof(unsigned long long));
+    cudaMalloc(&state.currentLengths, numBeams * sizeof(int));
+    cudaMalloc(&state.lastTokens, numBeams * sizeof(int));
+    
+    cudaMalloc(&state.historyParents, config.maxTime * numBeams * sizeof(int));
+    cudaMalloc(&state.historyTokens, config.maxTime * numBeams * sizeof(int));
+    
+    cudaMalloc(&state.candKeys, numCandidates * sizeof(unsigned long long));
+    cudaMalloc(&state.candProbBlank, numCandidates * sizeof(float));
+    cudaMalloc(&state.candProbNonBlank, numCandidates * sizeof(float));
+    cudaMalloc(&state.candParentIdx, numCandidates * sizeof(int));
+    cudaMalloc(&state.candToken, numCandidates * sizeof(int));
+    cudaMalloc(&state.candLastToken, numCandidates * sizeof(int));
+    
+    cudaMalloc(&state.candKeysSorted, numCandidates * sizeof(unsigned long long));
+    cudaMalloc(&state.candIndicesSorted, numCandidates * sizeof(int));
+    
+    cudaMalloc(&state.uniqueKeys, numCandidates * sizeof(unsigned long long));
+    cudaMalloc(&state.uniqueProbBlank, numCandidates * sizeof(float));
+    cudaMalloc(&state.uniqueProbNonBlank, numCandidates * sizeof(float));
+    cudaMalloc(&state.uniqueProbTotal, numCandidates * sizeof(float));
+    cudaMalloc(&state.uniqueParentIdx, numCandidates * sizeof(int));
+    cudaMalloc(&state.uniqueToken, numCandidates * sizeof(int));
+    cudaMalloc(&state.uniqueLastToken, numCandidates * sizeof(int));
+    
+    cudaMalloc(&state.outputSequences, numBeams * config.maxOutputLength * sizeof(int));
+    cudaMalloc(&state.outputLengths, numBeams * sizeof(int));
+    cudaMalloc(&state.outputScores, numBeams * sizeof(float));
+    
     return cudaSuccess;
 }
 
 void freeCTCBeamSearchState(CTCBeamSearchState& state) {
-    cudaFree(state.prefixes);
-    cudaFree(state.prefixLengths);
     cudaFree(state.probBlank);
     cudaFree(state.probNonBlank);
     cudaFree(state.probTotal);
-    cudaFree(state.nextPrefixes);
-    cudaFree(state.nextPrefixLengths);
-    cudaFree(state.nextLabels);
-    cudaFree(state.nextProbBlank);
-    cudaFree(state.nextProbNonBlank);
-    cudaFree(state.nextProbTotal);
-    cudaFree(state.sortedIndices);
+    cudaFree(state.prefixHashes);
+    cudaFree(state.currentLengths);
+    cudaFree(state.lastTokens);
+    cudaFree(state.historyParents);
+    cudaFree(state.historyTokens);
+    cudaFree(state.candKeys);
+    cudaFree(state.candProbBlank);
+    cudaFree(state.candProbNonBlank);
+    cudaFree(state.candParentIdx);
+    cudaFree(state.candToken);
+    cudaFree(state.candLastToken);
+    cudaFree(state.candKeysSorted);
+    cudaFree(state.candIndicesSorted);
+    cudaFree(state.uniqueKeys);
+    cudaFree(state.uniqueProbBlank);
+    cudaFree(state.uniqueProbNonBlank);
+    cudaFree(state.uniqueProbTotal);
+    cudaFree(state.uniqueParentIdx);
+    cudaFree(state.uniqueToken);
+    cudaFree(state.uniqueLastToken);
+    cudaFree(state.outputSequences);
+    cudaFree(state.outputLengths);
+    cudaFree(state.outputScores);
 }

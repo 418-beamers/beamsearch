@@ -7,7 +7,6 @@ T* get_device_ptr(torch::Tensor tensor) {
     return tensor.data_ptr<T>();
 }
 
-// Create and allocate CTC beam search state
 uintptr_t create_ctc_beam_search_state(
     int batch_size,
     int beam_width,
@@ -37,7 +36,6 @@ uintptr_t create_ctc_beam_search_state(
     return reinterpret_cast<uintptr_t>(state);
 }
 
-// Initialize CTC beam search
 void initialize_ctc_beam_search(
     uintptr_t state_ptr,
     int batch_size,
@@ -72,10 +70,6 @@ void run_ctc_beam_search(
     int blank_id,
     torch::Tensor input_lengths
 ) {
-    TORCH_CHECK(log_probs.is_cuda(), "log_probs must be a CUDA tensor");
-    TORCH_CHECK(log_probs.dtype() == torch::kFloat32, "log_probs must be float32");
-    TORCH_CHECK(log_probs.dim() == 3, "log_probs must be 3D [batch_size, max_time, num_classes]");
-
     CTCBeamSearchState* state = reinterpret_cast<CTCBeamSearchState*>(state_ptr);
 
     CTCBeamSearchConfig config;
@@ -90,12 +84,11 @@ void run_ctc_beam_search(
     int* input_lengths_ptr = nullptr;
 
     if (input_lengths.defined()) {
-        TORCH_CHECK(input_lengths.is_cuda(), "input_lengths must be a CUDA tensor");
-        TORCH_CHECK(input_lengths.dtype() == torch::kInt32, "input_lengths must be int32");
         input_lengths_ptr = get_device_ptr<int>(input_lengths);
     }
 
     launchCTCBeamSearch(*state, config, log_probs_ptr, input_lengths_ptr, 0);
+    launchReconstructSequences(*state, config, 0); 
     cudaDeviceSynchronize();
 }
 
@@ -116,7 +109,7 @@ torch::Tensor get_sequences(
     int* sequences_ptr = get_device_ptr<int>(sequences);
     int num_beams = batch_size * beam_width;
 
-    cudaMemcpy(sequences_ptr, state->prefixes,
+    cudaMemcpy(sequences_ptr, state->outputSequences,
                num_beams * max_output_length * sizeof(int),
                cudaMemcpyDeviceToDevice);
 
@@ -139,7 +132,7 @@ torch::Tensor get_sequence_lengths(
     int* lengths_ptr = get_device_ptr<int>(lengths);
     int num_beams = batch_size * beam_width;
 
-    cudaMemcpy(lengths_ptr, state->prefixLengths,
+    cudaMemcpy(lengths_ptr, state->outputLengths, 
                num_beams * sizeof(int),
                cudaMemcpyDeviceToDevice);
 
@@ -162,7 +155,7 @@ torch::Tensor get_scores(
     float* scores_ptr = get_device_ptr<float>(scores);
     int num_beams = batch_size * beam_width;
 
-    cudaMemcpy(scores_ptr, state->probTotal,
+    cudaMemcpy(scores_ptr, state->probTotal, 
                num_beams * sizeof(float),
                cudaMemcpyDeviceToDevice);
 
@@ -176,18 +169,11 @@ void free_ctc_beam_search_state(uintptr_t state_ptr) {
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.def("create_ctc_beam_search_state", &create_ctc_beam_search_state,
-          "Create and allocate CTC beam search state");
-    m.def("initialize_ctc_beam_search", &initialize_ctc_beam_search,
-          "Initialize CTC beam search with empty prefix");
-    m.def("run_ctc_beam_search", &run_ctc_beam_search,
-          "Run CTC beam search on log probabilities");
-    m.def("get_sequences", &get_sequences,
-          "Get output sequences");
-    m.def("get_sequence_lengths", &get_sequence_lengths,
-          "Get output sequence lengths");
-    m.def("get_scores", &get_scores,
-          "Get beam scores");
-    m.def("free_ctc_beam_search_state", &free_ctc_beam_search_state,
-          "Free CTC beam search state");
+    m.def("create_ctc_beam_search_state", &create_ctc_beam_search_state, "Create state");
+    m.def("initialize_ctc_beam_search", &initialize_ctc_beam_search, "Initialize");
+    m.def("run_ctc_beam_search", &run_ctc_beam_search, "Run search");
+    m.def("get_sequences", &get_sequences, "Get sequences");
+    m.def("get_sequence_lengths", &get_sequence_lengths, "Get lengths");
+    m.def("get_scores", &get_scores, "Get scores");
+    m.def("free_ctc_beam_search_state", &free_ctc_beam_search_state, "Free state");
 }
