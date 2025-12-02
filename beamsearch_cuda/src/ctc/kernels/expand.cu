@@ -34,7 +34,6 @@ __global__ void expand(
     if (finished) {
         if (c == config.blank_id) {
              unsigned int hash = state.prefix_hashes[flatBeamIdx];
-             // Combine batchIdx (16 bits) and hash (16 bits)
              state.cand_keys[idx] = ((unsigned int)batchIdx << 16) | (hash & 0xFFFF);
              state.cand_prob_blank[idx] = pBlank;
              state.cand_prob_non_blank[idx] = pNonBlank;
