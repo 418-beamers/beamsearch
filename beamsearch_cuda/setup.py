@@ -7,13 +7,14 @@ setup(
         CUDAExtension(
             name='beamsearch_cuda_native',
             sources=[
-                'src/ctc/binding.cpp',
-                'src/ctc/ctc_beam_search_cuda.cu',
-                'src/ctc/kernels/initialize_ctc_beam_search.cu',
-                'src/ctc/kernels/expand_beams.cu',
-                'src/ctc/kernels/select_top_k.cu',
-                'src/ctc/kernels/reconstruct_sequences.cu',
+                'src/ctc/interface.cpp',
+                'src/ctc/beam_search.cu',
+                'src/ctc/kernels/initialize.cu',
+                'src/ctc/kernels/expand.cu',
+                'src/ctc/kernels/top_k.cu',
+                'src/ctc/kernels/reconstruct.cu',
             ],
+            include_dirs=['src/ctc'],
             extra_compile_args={
                 'cxx': ['-O3'],
                 'nvcc': [
