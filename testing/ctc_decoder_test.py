@@ -263,8 +263,7 @@ def summarize_similarity(reference_decodings, candidate_decodings):
     if not candidate_decodings:
         return
 
-    total_similarity = 0.0
-    exact_matches = 0
+    total_distance = 0.0
     sample_count = 0
 
     for ref_texts, cand_texts in zip(reference_decodings, candidate_decodings):
@@ -277,23 +276,19 @@ def summarize_similarity(reference_decodings, candidate_decodings):
         ref_best_tokens = ref_best.split()
         cand_best_tokens = cand_best.split()
 
-        similarity = normalized_similarity(ref_best_tokens, cand_best_tokens)
-
-        total_similarity += similarity
-        exact_matches += int(ref_best == cand_best)
+        distance = levenshtein_distance(ref_best_tokens, cand_best_tokens)
+        total_distance += distance
         sample_count += 1
 
     if sample_count == 0:
         return
 
-    avg_similarity = total_similarity / sample_count
-    exact_rate = exact_matches / sample_count
+    avg_distance = total_distance / sample_count
 
     print("=" * 80)
     print("decoder similarity summary:")
     print(
-        f"avg_best_sim={avg_similarity:.3f}, "
-        f"exact_match_rate={exact_rate:.2%}"
+        f"avg_edit_distance={avg_distance:.3f}"
     )
 
 def main():
