@@ -56,41 +56,23 @@ python testing/ctc_decoder_test.py --candidate-device cuda
 ```
 
 # Running the tests 
-build whichever extension you need first:
+Install the extension:
 
-```
-# hello-world toolchain check
-cd beamsearch_cuda/src/hello && make
-
-# full CUDA decoder
-cd beamsearch_cuda/src/ctc && make
+```bash
+pip install -e beamsearch_cuda/
 ```
 
-set path to ensure modules are visible
-```
-export PYTHONPATH=$PWD:$PYTHONPATH
-```
-
-run the tests with corresponding flags
-```
-# flashlight (ref) decoder + hello-world CUDA kernel (prints the CUDA greeting only)
-python testing/ctc_decoder_test.py --hello
-
-# flashlight (ref) decoder + full CUDA beam search (requires --candidate-device cuda)
+Run the tests:
+```bash
 python testing/ctc_decoder_test.py --candidate-device cuda
 ```
 
-# CTC CUDA hello world
+# CTC Beam Search Usage
 
 `beamsearch_cuda.beam_search.ctc_beam_search` runs the CUDA decoder on tensors passed for 
 `log_probs` and `input_lengths`. 
 
-The hello-world kernel lives under `beamsearch_cuda/src/hello` and serves as a toolchain check. Can run it with: 
-```
-python testing/ctc_decoder_test.py --helo
-```
-
-goal example usage:
+Example usage:
 
 ```python
 import torch
@@ -107,5 +89,3 @@ beam_search.ctc_beam_search(
     top_k=2,
 )
 ```
-
-*This is just a first test to make sure the dev environment works*

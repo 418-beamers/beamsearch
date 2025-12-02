@@ -10,24 +10,27 @@ def _load_ctc_extension():
     global _MODULE
 
     if _MODULE is None:
-        base_dir = Path(__file__).resolve().parent
-        src_dir = base_dir / "src" / "ctc"
+        try:
+            import beamsearch_cuda_native as _MODULE
+        except ImportError:
+            base_dir = Path(__file__).resolve().parent
+            src_dir = base_dir / "src" / "ctc"
 
-        sources = [
-            src_dir / "interface.cpp",
-            src_dir / "beam_search.cu",
-            src_dir / "kernels" / "initialize.cu",
-            src_dir / "kernels" / "expand.cu",
-            src_dir / "kernels" / "top_k.cu",
-            src_dir / "kernels" / "reconstruct.cu",
-        ]
+            sources = [
+                src_dir / "interface.cpp",
+                src_dir / "beam_search.cu",
+                src_dir / "kernels" / "initialize.cu",
+                src_dir / "kernels" / "expand.cu",
+                src_dir / "kernels" / "top_k.cu",
+                src_dir / "kernels" / "reconstruct.cu",
+            ]
 
-        _MODULE = load(
-            name="beamsearch_cuda_native",
-            sources=[str(path) for path in sources],
-            extra_include_paths=[str(src_dir)],
-            verbose=False,
-        )
+            _MODULE = load(
+                name="beamsearch_cuda_native",
+                sources=[str(path) for path in sources],
+                extra_include_paths=[str(src_dir)],
+                verbose=False,
+            )
 
     return _MODULE
 
