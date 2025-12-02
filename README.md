@@ -42,17 +42,28 @@ By contrast, auto-regressive Beam search has a dependency between previously and
 
 In practice, CTC Beam search decoding is preferred for ASR (automatic speech recognition), especially in streaming/real-time applications, whereas auto-regressive Beam search is preferred for language models where the token dependencies matter more.
 
-## Simple decoder testing harness
+### Decoder Test Arguments
 
-Use `testing/ctc_decoder_test.py` to run the flashlight-based (https://arxiv.org/pdf/2201.12465) reference decoder and our development decoder on randomly generated log-probabilities. 
+The `testing/ctc_decoder_test.py` script accepts several arguments to control the test parameters:
 
+- `--batch-size`: Batch size for the input (default: 2).
+- `--time-steps`: Length of the input sequences (default: 120).
+- `--vocab-size`: Size of the vocabulary (default: 32).
+- `--beam-width`: Width of the beam for the search (default: 50).
+- `--top-k`: Number of top hypotheses to return (default: 3).
+- `--candidate-device`: Device to run the candidate decoder on (`cuda`). If not specified, only the reference decoder runs (on CPU).
+- `--seed`: Manual seed for reproducibility (default: 0).
+
+### Example Usage
+
+Run with custom parameters:
 ```bash
-python testing/ctc_decoder_test.py --batch-size 4 --time-steps 150 --vocab-size 32
+python testing/ctc_decoder_test.py --batch-size 4 --time-steps 150 --vocab-size 32 --beam-width 20 --candidate-device cuda
 ```
-To compare against CUDA implementation:
 
+Run only the reference decoder:
 ```bash
-python testing/ctc_decoder_test.py --candidate-device cuda
+python testing/ctc_decoder_test.py --batch-size 2
 ```
 
 # Running the tests 
