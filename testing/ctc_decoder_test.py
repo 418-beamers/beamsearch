@@ -19,6 +19,8 @@ import time
 import torch
 from torchaudio.models.decoder import ctc_decoder
 from torch.utils.cpp_extension import load as load_extension
+from rich.console import Console
+from rich.table import Table as RichTable
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -63,6 +65,11 @@ def parse_args():
         "--hello",
         action="store_true",
         help="run the hello-world CUDA extension instead of the beam search decoder",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print decoded sequences",
     )
     return parser.parse_args()
 
@@ -206,12 +213,46 @@ def run_timed(label, runs, fn, args=None, sync_fn=None):
     median = statistics.median(durations)
     stdev = statistics.stdev(durations) if len(durations) > 1 else 0.0
 
-    print(
-        f"{label} decoder execution time (s): "
-        f"mean={mean:.4f}, median={median:.4f}, stdev={stdev:.4f}"
+    timing_stats = {
+        "label": label,
+        "mean": mean,
+        "median": median,
+        "stdev": stdev,
+    }
+
+    return result, timing_stats
+
+
+def print_timing_table(timing_stats_list):
+    if not timing_stats_list:
+        return
+
+    has_similarity = any(
+        stats.get("avg_edit_distance") is not None for stats in timing_stats_list
     )
 
-    return result
+    console = Console()
+    table = RichTable(title="Results Summary")
+    table.add_column("Decoder", justify="left")
+    table.add_column("Mean (s)", justify="right")
+    table.add_column("Median (s)", justify="right")
+    table.add_column("Std Dev (s)", justify="right")
+    if has_similarity:
+        table.add_column("Avg Edit Dist", justify="right")
+
+    for stats in timing_stats_list:
+        avg_dist = stats.get("avg_edit_distance")
+        row = [
+            str(stats.get("label", "")),
+            f"{stats.get('mean', 0.0):.4f}",
+            f"{stats.get('median', 0.0):.4f}",
+            f"{stats.get('stdev', 0.0):.4f}",
+        ]
+        if has_similarity:
+            row.append("" if avg_dist is None else f"{avg_dist:.3f}")
+        table.add_row(*row)
+
+    console.print(table)
 
 # standard implementation for similarity metrics: 
 # https://www.geeksforgeeks.org/dsa/introduction-to-levenshtein-distance/ 
@@ -258,10 +299,10 @@ def longest_common_prefix_length(tokens_a, tokens_b):
 
     return length
 
-# nice summary printout fn 
-def summarize_similarity(reference_decodings, candidate_decodings):
+# compute average edit distance between best paths
+def compute_avg_edit_distance(reference_decodings, candidate_decodings):
     if not candidate_decodings:
-        return
+        return None
 
     total_distance = 0.0
     sample_count = 0
@@ -281,15 +322,21 @@ def summarize_similarity(reference_decodings, candidate_decodings):
         sample_count += 1
 
     if sample_count == 0:
-        return
+        return None
 
-    avg_distance = total_distance / sample_count
+    return total_distance / sample_count
+
+
+# nice summary printout fn 
+def summarize_similarity(reference_decodings, candidate_decodings):
+    avg_distance = compute_avg_edit_distance(reference_decodings, candidate_decodings)
+    if avg_distance is None:
+        return None
 
     print("=" * 80)
     print("decoder similarity summary:")
-    print(
-        f"avg_edit_distance={avg_distance:.3f}"
-    )
+    print(f"avg_edit_distance={avg_distance:.3f}")
+    return avg_distance
 
 def main():
     args = parse_args()
@@ -331,8 +378,8 @@ def main():
     assert int(input_lengths_cpu.min()) > 0, input_lengths_cpu
     assert int(input_lengths_cpu.max()) <= T, (int(input_lengths_cpu.max()), T)
 
-    ref_output = run_timed(
-        "Reference",
+    ref_output, ref_timing = run_timed(
+        "reference",
         args.timing_runs,
         decoder,
         args=(emissions_cpu, input_lengths_cpu),
@@ -341,14 +388,17 @@ def main():
     ref_decoded_texts = format_reference_outputs(
         ref_output, tokens, blank_idx, args.top_k
     )
-    print_decoder_outputs("reference", ref_decoded_texts)
+    timing_stats_list = [ref_timing]
 
-    print("="*80)
+    if args.verbose:
+        print_decoder_outputs("reference", ref_decoded_texts)
+        print("=" * 80)
     if args.hello:
         if not torch.cuda.is_available():
 
             print("CUDA is required for the hello-world extension.")
-            print("="*80)
+            print("=" * 80)
+            print_timing_table(timing_stats_list)
             return
 
         hello_ext = load_hello_extension()
@@ -359,7 +409,8 @@ def main():
         hello_ext.ctc_hello(log_probs_candidate, input_lengths_candidate)
 
         print("hello-world CUDA extension executed.")
-        print("="*80)
+        print("=" * 80)
+        print_timing_table(timing_stats_list)
         return
 
     candidate_module = load_candidate_module()
@@ -385,13 +436,15 @@ def main():
                 max_time=args.time_steps,
             )
 
-            sequences, lengths, scores = run_timed(
+            (sequences, lengths, scores), candidate_timing = run_timed(
                 "candidate",
                 args.timing_runs,
                 candidate_decoder.decode,
                 args=(log_probs_candidate, input_lengths_candidate),
                 sync_fn=torch.cuda.synchronize,
             )
+
+            timing_stats_list.append(candidate_timing)
 
             sorted_indices = scores.argsort(dim=1, descending=True)
             top_k_indices = sorted_indices[:, :args.top_k]
@@ -413,14 +466,19 @@ def main():
             candidate_hypotheses, candidate_lengths, tokens, blank_idx, args.top_k
         )
 
-        print_decoder_outputs("candidate", candidate_decoded_texts)
-        summarize_similarity(ref_decoded_texts, candidate_decoded_texts)
+        avg_distance = compute_avg_edit_distance(ref_decoded_texts, candidate_decoded_texts)
+        if avg_distance is not None:
+            candidate_timing["avg_edit_distance"] = avg_distance
+
+        if args.verbose:
+            print_decoder_outputs("candidate", candidate_decoded_texts)
+            summarize_similarity(ref_decoded_texts, candidate_decoded_texts)
     else:
         print(
             "\nbeamsearch_cuda not importable or missing `ctc_beam_search`, "
             "or candidate device is not CUDA skipping candidate comparison."
         )
-    print("="*80)
+    print_timing_table(timing_stats_list)
 
 if __name__ == "__main__":
     main()
