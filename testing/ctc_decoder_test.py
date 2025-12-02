@@ -4,11 +4,15 @@ as a reference to compare against our CUDA CTC Decoder
 
 currently we make a batch of (B,T,V) shaped log_probs to feed them through both decoders 
 => extension: add the ability to go from .wav to decoder 
+
+timing: multi run mean, median, stdev 
+similarity: levenshtein dist over normalized outputs
 """
 
 from __future__ import annotations
 import argparse
 from pathlib import Path
+import statistics
 import sys
 import time
 
@@ -32,6 +36,13 @@ def parse_args():
     parser.add_argument("--vocab-size", type=int, default=32, help="vocab size")
     parser.add_argument("--beam-width", type=int, default=50, help="beam width")
     parser.add_argument("--top-k", type=int, default=3, help="hypotheses to keep per input in batch")
+
+    parser.add_argument(
+        "--timing-runs",
+        type=int,
+        default=3,
+        help="number of timing repetitions per decoder",
+    )
 
     parser.add_argument(
         "--candidate-device",
@@ -125,6 +136,166 @@ def detokenize(sequence, tokens, blank_idx):
 
     return " ".join(subwords)
 
+# standardized format for similarity comp
+def format_reference_outputs(ref_output, tokens, blank_idx, top_k):
+    formatted = []
+
+    for hypotheses in ref_output:
+        sample_texts = []
+
+        for h in hypotheses[:top_k]:
+            seq = getattr(h, "tokens", [])
+            sample_texts.append(detokenize(seq, tokens, blank_idx))
+
+        formatted.append(sample_texts)
+
+    return formatted
+
+# standardized format for similarity comp
+def format_candidate_outputs(candidate_sequences, candidate_lengths, tokens, blank_idx, top_k):
+    formatted = []
+
+    for sample_hyps, sample_lengths in zip(candidate_sequences, candidate_lengths):
+        sample_texts = []
+
+        for seq, length in zip(sample_hyps[:top_k], sample_lengths[:top_k]):
+            valid_length = int(length)
+
+            if valid_length < 0:
+                valid_length = 0
+            valid_length = min(valid_length, seq.numel())
+
+            trimmed = seq[:valid_length]
+            sample_texts.append(detokenize(trimmed.tolist(), tokens, blank_idx))
+
+        formatted.append(sample_texts)
+
+    return formatted
+
+def print_decoder_outputs(label, decoded_texts):
+    print("=" * 80)
+    print(f"{label} decoder outputs:")
+
+    for batch_idx, texts in enumerate(decoded_texts):
+        print(f"sample {batch_idx}: {texts}")
+
+def run_timed(label, runs, fn, args=None, sync_fn=None):
+    if args is None:
+        args = ()
+
+    durations = []
+    result = None
+
+    for _ in range(max(1, runs)):
+        
+        # needed for our CUDA impl so timing is fair given async
+        if sync_fn:
+            sync_fn()
+
+        start_time = time.perf_counter()
+        result = fn(*args)
+
+        # needed for our CUDA impl so timing is fair given async
+        if sync_fn:
+            sync_fn()
+
+        end_time = time.perf_counter()
+        durations.append(end_time - start_time)
+
+    mean = statistics.mean(durations)
+    median = statistics.median(durations)
+    stdev = statistics.stdev(durations) if len(durations) > 1 else 0.0
+
+    print(
+        f"{label} decoder execution time (s): "
+        f"mean={mean:.4f}, median={median:.4f}, stdev={stdev:.4f}"
+    )
+
+    return result
+
+# standard implementation for similarity metrics: 
+# https://www.geeksforgeeks.org/dsa/introduction-to-levenshtein-distance/ 
+def levenshtein_distance(tokens_a, tokens_b):
+    if len(tokens_a) < len(tokens_b):
+        tokens_a, tokens_b = tokens_b, tokens_a
+
+    previous_row = list(range(len(tokens_b) + 1))
+
+    for i, token_a in enumerate(tokens_a, start=1):
+        current_row = [i]
+
+        for j, token_b in enumerate(tokens_b, start=1):
+            cost = 0 if token_a == token_b else 1
+            current_row.append(
+                min(
+                    current_row[-1] + 1,
+                    previous_row[j] + 1,
+                    previous_row[j - 1] + cost,
+                )
+            )
+
+        previous_row = current_row
+
+    return previous_row[-1]
+
+def normalized_similarity(tokens_a, tokens_b):
+    max_len = max(len(tokens_a), len(tokens_b), 1)
+
+    if max_len == 0:
+        return 1.0
+
+    distance = levenshtein_distance(tokens_a, tokens_b)
+
+    return 1.0 - (distance / max_len)
+
+def longest_common_prefix_length(tokens_a, tokens_b):
+    length = 0
+
+    for token_a, token_b in zip(tokens_a, tokens_b):
+        if token_a != token_b:
+            break
+        length += 1
+
+    return length
+
+# nice summary printout fn 
+def summarize_similarity(reference_decodings, candidate_decodings):
+    if not candidate_decodings:
+        return
+
+    total_similarity = 0.0
+    exact_matches = 0
+    sample_count = 0
+
+    for ref_texts, cand_texts in zip(reference_decodings, candidate_decodings):
+        ref_texts = ref_texts or [""]
+        cand_texts = cand_texts or [""]
+
+        ref_best = ref_texts[0]
+        cand_best = cand_texts[0]
+
+        ref_best_tokens = ref_best.split()
+        cand_best_tokens = cand_best.split()
+
+        similarity = normalized_similarity(ref_best_tokens, cand_best_tokens)
+
+        total_similarity += similarity
+        exact_matches += int(ref_best == cand_best)
+        sample_count += 1
+
+    if sample_count == 0:
+        return
+
+    avg_similarity = total_similarity / sample_count
+    exact_rate = exact_matches / sample_count
+
+    print("=" * 80)
+    print("decoder similarity summary:")
+    print(
+        f"avg_best_sim={avg_similarity:.3f}, "
+        f"exact_match_rate={exact_rate:.2%}"
+    )
+
 def main():
     args = parse_args()
 
@@ -165,20 +336,17 @@ def main():
     assert int(input_lengths_cpu.min()) > 0, input_lengths_cpu
     assert int(input_lengths_cpu.max()) <= T, (int(input_lengths_cpu.max()), T)
 
-    start_time = time.perf_counter()
-    ref_output = decoder(emissions_cpu, input_lengths_cpu)
-    end_time = time.perf_counter()
-    print(f"Reference decoder execution time: {end_time - start_time:.4f} seconds")
+    ref_output = run_timed(
+        "Reference",
+        args.timing_runs,
+        decoder,
+        args=(emissions_cpu, input_lengths_cpu),
+    )
 
-    print("="*80)
-    print("reference decoder outputs:")
-    for batch_idx, hypotheses in enumerate(ref_output):
-        texts = [
-            detokenize(h.tokens, tokens, blank_idx) if hasattr(h, "tokens") else ""
-            for h in hypotheses[: args.top_k]
-        ]
-        print(f"sample {batch_idx}: {texts}")
-
+    ref_decoded_texts = format_reference_outputs(
+        ref_output, tokens, blank_idx, args.top_k
+    )
+    print_decoder_outputs("reference", ref_decoded_texts)
 
     print("="*80)
     if args.hello:
@@ -222,40 +390,36 @@ def main():
                 max_time=args.time_steps,
             )
 
-            torch.cuda.synchronize()
-            start_time = time.perf_counter()
-
-            sequences, _, scores = candidate_decoder.decode(
-                log_probs=log_probs_candidate,
-                input_lengths=input_lengths_candidate,
+            sequences, lengths, scores = run_timed(
+                "candidate",
+                args.timing_runs,
+                candidate_decoder.decode,
+                args=(log_probs_candidate, input_lengths_candidate),
+                sync_fn=torch.cuda.synchronize,
             )
 
             sorted_indices = scores.argsort(dim=1, descending=True)
             top_k_indices = sorted_indices[:, :args.top_k]
+            top_lengths = lengths.gather(1, top_k_indices)
             
 
-            B, Beam, L = sequences.shape
+            B, _, L = sequences.shape
             top_k_indices_expanded = top_k_indices.unsqueeze(2).expand(-1, -1, L)
             candidate_hypotheses = sequences.gather(1, top_k_indices_expanded)
-
-            torch.cuda.synchronize()
-            end_time = time.perf_counter()
-            print(f"Candidate decoder execution time: {end_time - start_time:.4f} seconds")
 
         except NotImplementedError:
             print("candidate raised NotImplementedError, skip")
             return
 
         candidate_hypotheses = candidate_hypotheses.to("cpu")
+        candidate_lengths = top_lengths.to("cpu")
 
-        print("="*80)
-        print("candidate decoder outputs:")
+        candidate_decoded_texts = format_candidate_outputs(
+            candidate_hypotheses, candidate_lengths, tokens, blank_idx, args.top_k
+        )
 
-        for batch_idx, sample_hyps in enumerate(candidate_hypotheses):
-            decoded = [
-                detokenize(h.tolist(), tokens, blank_idx) for h in sample_hyps[: args.top_k]
-            ]
-            print(f"sample {batch_idx}: {decoded}")
+        print_decoder_outputs("candidate", candidate_decoded_texts)
+        summarize_similarity(ref_decoded_texts, candidate_decoded_texts)
     else:
         print(
             "\nbeamsearch_cuda not importable or missing `ctc_beam_search`, "
