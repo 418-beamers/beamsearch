@@ -1,22 +1,3 @@
-# Setup
-Run the following commands to create a conda env ready to run the test harness (temporarily for CPU only)
-```bash
-conda create -n beams python=3.10 -y
-conda activate beams
-python -m pip install --upgrade pip setuptools wheel ninja
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-python -m pip install flashlight-text rich
-```
-
-Might also have to run these to add CUDA toolkit to path: 
-```
-export CUDA_HOME=/usr/local/cuda-12.4
-export PATH=$CUDA_HOME/bin:$PATH
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-```
-
-can run `python testing/env_test.py` to validate that the basic libraries n     ecessary for the project are present
-
 # Interface
 Let: 
 - B: batch_size, 
@@ -42,7 +23,50 @@ By contrast, auto-regressive Beam search has a dependency between previously and
 
 In practice, CTC Beam search decoding is preferred for ASR (automatic speech recognition), especially in streaming/real-time applications, whereas auto-regressive Beam search is preferred for language models where the token dependencies matter more.
 
-### Decoder Test Arguments
+# Setup
+Run the following commands to create a conda env ready to run the test harness (temporarily for CPU only)
+```bash
+conda create -n beams python=3.10 -y
+conda activate beams
+python -m pip install --upgrade pip setuptools wheel ninja
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+python -m pip install flashlight-text rich soundfile
+```
+
+Might also have to run these to add CUDA toolkit to path: 
+```
+export CUDA_HOME=/usr/local/cuda-12.4
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+```
+
+can run `python testing/env_test.py` to validate that the basic libraries necessary for the project are present
+
+# Quickstart
+
+## Building CUDA Extension 
+
+Install the extension by running:
+```bash
+pip install -e beamsearch_cuda/ --no-build-isolation
+```
+
+Verify CUDA toolchain with hello-world extension:
+```bash
+python testing/ctc_decoder_test.py --hello
+```
+
+Run synthetic benchmark:
+```bash
+python testing/ctc_decoder_test.py --candidate-device cuda
+```
+
+Run real audio test:
+```bash
+python testing/ctc_decoder_test.py --real --candidate-device cuda --verbose
+```
+
+# Testing Module
 
 The `testing/ctc_decoder_test.py` script accepts several arguments to control the test parameters:
 
@@ -84,12 +108,12 @@ python testing/ctc_decoder_test.py --batch-size 2
 
 **Real Audio Mode**
 
-Run with a sample audio file (auto-downloaded):
+Run with a sample .wav (audio) file (auto-downloaded):
 ```bash
 python testing/ctc_decoder_test.py --real --candidate-device cuda
 ```
 
-Run with your own audio file:
+or with your own .wav file
 ```bash
 python testing/ctc_decoder_test.py --real --audio-file /path/to/audio.wav --candidate-device cuda
 ```
@@ -100,28 +124,6 @@ python testing/ctc_decoder_test.py --real --verbose --candidate-device cuda
 ```
 
 Real audio mode uses the Wav2Vec2 ASR model from torchaudio to generate CTC log probabilities from actual speech.
-
-# Running the Tests
-
-Install the extension:
-```bash
-pip install -e beamsearch_cuda/ --no-build-isolation
-```
-
-Run synthetic benchmark:
-```bash
-python testing/ctc_decoder_test.py --candidate-device cuda
-```
-
-Run real audio test:
-```bash
-python testing/ctc_decoder_test.py --real --candidate-device cuda --verbose
-```
-
-Verify CUDA toolchain with hello-world extension:
-```bash
-python testing/ctc_decoder_test.py --hello
-```
 
 ## Test Module Structure
 
@@ -139,27 +141,4 @@ testing/
     ├── loaders.py         # extension loading (load_candidate_module, load_hello_extension)
     ├── inputs.py          # synthetic input generation
     └── real_audio.py      # Wav2Vec2 audio processing for real ASR testing
-```
-
-# CTC Beam Search Usage
-
-`beamsearch_cuda.beam_search.ctc_beam_search` runs the CUDA decoder on tensors passed for 
-`log_probs` and `input_lengths`. 
-
-Example usage:
-
-```python
-import torch
-from beamsearch_cuda import beam_search
-
-log_probs = torch.randn(2, 8, 32, device="cuda").log_softmax(-1)
-lengths = torch.tensor([8, 6], dtype=torch.int32, device="cuda")
-
-beam_search.ctc_beam_search(
-    log_probs=log_probs,
-    input_lengths=lengths,
-    beam_width=4,
-    blank_idx=0,
-    top_k=2,
-)
 ```

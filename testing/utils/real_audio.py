@@ -76,7 +76,42 @@ def load_audio(
     target_sample_rate: int = 16000,
 ) -> tuple[torch.Tensor, int]:
 
-    waveform, sample_rate = torchaudio.load(audio_path)
+    # trying all the different backends - torchaudio can be finicky
+    waveform = None
+    sample_rate = None
+    
+    # sf recommended first
+    try:
+        import soundfile as sf
+        data, sample_rate = sf.read(audio_path)
+        waveform = torch.from_numpy(data).float()
+        if waveform.dim() == 1:
+            waveform = waveform.unsqueeze(0)
+        else:
+            waveform = waveform.T  # soundfile returns (samples, channels)
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    
+    # fallback
+    if waveform is None:
+        for backend in ["soundfile", "sox", "ffmpeg"]:
+            try:
+                waveform, sample_rate = torchaudio.load(audio_path, backend=backend)
+                break
+            except Exception:
+                continue
+
+    if waveform is None:
+        try:
+            waveform, sample_rate = torchaudio.load(audio_path)
+        except RuntimeError as e:
+            print(f"ERROR: Could not load audio file: {audio_path}")
+            print(f"torchaudio needs a backend. Install one of: pip install soundfile")
+            raise RuntimeError(
+                "No audio backend available, install soundfile: pip install soundfile"
+            ) from e
     
     # resample audio if necessary
     if sample_rate != target_sample_rate:
