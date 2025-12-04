@@ -22,9 +22,9 @@ class RealAudioInputs:
     sample_rate: int
     audio_path: str
 
-# a classic audio sample
+# librispeech sample from pytorch hub
 def get_sample_audio_url() -> str:
-    return "https://www.voiptroubleshooter.com/open_speech/american/OSR_us_000_0010_8k.wav"
+    return "https://pytorch-tutorial-assets.s3.amazonaws.com/VOiCES_devkit/source-16k/train/sp0307/Lab41-SRI-VOiCES-src-sp0307-ch127535-sg0042.wav"
 
 def download_sample_audio(cache_dir=None) -> Path:
     
@@ -37,35 +37,19 @@ def download_sample_audio(cache_dir=None) -> Path:
     if sample_path.exists():
         return sample_path
     
-    # get the sample
     url = get_sample_audio_url()
     
     try:
         import urllib.request
-        urllib.request.urlretrieve(url, str(sample_path))
+        # add headers to avoid 406 errors
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as response:
+            with open(sample_path, "wb") as f:
+                f.write(response.read())
     except Exception as e:
-
-        # synthetic waveform alternative
-        print(f"error on sample download: {e}, generating synthetic audio")
-
-        sample_rate = 16000
-        duration = 3.0  #s 
-        t = torch.linspace(0, duration, int(sample_rate * duration))
-        
-        # speech like waveform
-        waveform = (
-            0.3 * torch.sin(2 * 3.14159 * 200 * t) +  # fundamental
-            0.2 * torch.sin(2 * 3.14159 * 400 * t) +  # harmonic
-            0.1 * torch.sin(2 * 3.14159 * 600 * t) +  # harmonic
-            0.05 * torch.randn_like(t)  # noise
-        )
-
-        envelope = torch.ones_like(t)
-        envelope[:int(0.1 * sample_rate)] = torch.linspace(0, 1, int(0.1 * sample_rate))
-        envelope[-int(0.1 * sample_rate):] = torch.linspace(1, 0, int(0.1 * sample_rate))
-        waveform = waveform * envelope
-        waveform = waveform.unsqueeze(0) 
-        torchaudio.save(str(sample_path), waveform, sample_rate)
+        print(f"ERROR: Failed to download sample audio: {e}")
+        print(f"Please provide your own audio file with --audio-file <path>")
+        raise RuntimeError(f"Could not download sample audio from {url}") from e
     
     return sample_path
 
