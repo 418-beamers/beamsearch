@@ -149,6 +149,10 @@ def process_audio_with_wav2vec2(
         # emissions shape: (1, T, V)
         log_probs = torch.log_softmax(emissions, dim=-1)
     
+    # lengths can be None in some torchaudio versions
+    if lengths is None:
+        lengths = torch.tensor([log_probs.shape[1]], device=device, dtype=torch.int64)
+    
     if batch_size > 1:
         log_probs = log_probs.repeat(batch_size, 1, 1)
         lengths = lengths.repeat(batch_size)
