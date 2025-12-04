@@ -2,10 +2,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import struct
-import numpy as np
 
 INPUT_SIZE = 3
-HIDDEN_SIZE = 16
+HIDDEN_SIZE = 2
 OUTPUT_SIZE = 3
 
 class BeamScheduleNet(nn.Module):
