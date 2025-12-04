@@ -111,10 +111,15 @@ def generate_test_inputs(
 ) -> tuple[torch.Tensor, torch.Tensor]:
 
     torch.manual_seed(seed)
+    
     logits = torch.randn(batch_size, time_steps, vocab_size, device=device)
+    
+    time_indices = torch.arange(time_steps, device=device).float().view(1, -1, 1)
+    entropy_scale = 1.0 + (time_indices / time_steps) * 2.0  
+    
+    logits = logits * entropy_scale
     log_probs = torch.log_softmax(logits, dim=-1)
 
-    # keep as 25 for now
     min_len = max(25, time_steps // 3)
 
     input_lengths = torch.randint(

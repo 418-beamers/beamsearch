@@ -5,7 +5,8 @@ __global__ void top_k(
     CTCBeamSearchState state,
     CTCBeamSearchConfig config,
     int num_unique,
-    int time_step
+    int time_step,
+    int beam_width
 ) {
     int batchIdx = blockIdx.x;
     if (batchIdx >= config.batch_size) return;
@@ -16,8 +17,8 @@ __global__ void top_k(
 
     while (left < right) {
         int mid = left + (right - left) / 2;
-        int actualIdx = state.unique_indices[mid];
-        int midBatch = static_cast<int>(state.unique_keys[actualIdx] >> config.hash_bits);
+        int actualIdx = state.unique.indices[mid];
+        int midBatch = static_cast<int>(state.unique.keys[actualIdx] >> config.hash_bits);
         
         if (midBatch < batchIdx) {
             left = mid + 1;
@@ -29,8 +30,8 @@ __global__ void top_k(
 
     bool batchFound = false;
     if (batchStart < num_unique) {
-        int actualIdx = state.unique_indices[batchStart];
-        if (static_cast<int>(state.unique_keys[actualIdx] >> config.hash_bits) == batchIdx) {
+        int actualIdx = state.unique.indices[batchStart];
+        if (static_cast<int>(state.unique.keys[actualIdx] >> config.hash_bits) == batchIdx) {
             batchFound = true;
         }
     }
@@ -40,38 +41,38 @@ __global__ void top_k(
     for (int k = threadIdx.x; k < config.beam_width; k += blockDim.x) {
         int globalBeamIdx = batchIdx * config.beam_width + k;
         
-        bool isValid = batchFound && (batchStart + k < num_unique);
+        bool isValid = batchFound && (batchStart + k < num_unique) && (k < beam_width);
         if (isValid) {
              int sortedIdx = batchStart + k;
-             int uniqueIdx = state.unique_indices[sortedIdx];
+             int uniqueIdx = state.unique.indices[sortedIdx];
              
-             if (static_cast<int>(state.unique_keys[uniqueIdx] >> config.hash_bits) == batchIdx) {
-                state.prob_blank[globalBeamIdx] = state.unique_prob_blank[uniqueIdx];
-                state.prob_non_blank[globalBeamIdx] = state.unique_prob_non_blank[uniqueIdx];
-                state.prob_total[globalBeamIdx] = state.unique_prob_total[uniqueIdx];
+             if (static_cast<int>(state.unique.keys[uniqueIdx] >> config.hash_bits) == batchIdx) {
+                state.beam.prob_blank[globalBeamIdx] = state.unique.prob_blank[uniqueIdx];
+                state.beam.prob_non_blank[globalBeamIdx] = state.unique.prob_non_blank[uniqueIdx];
+                state.beam.prob_total[globalBeamIdx] = state.unique.prob_total[uniqueIdx];
 
-                unsigned int key = state.unique_keys[uniqueIdx];
-                state.prefix_hashes[globalBeamIdx] = key & mask;
-                state.last_tokens[globalBeamIdx] = state.unique_last_token[uniqueIdx];
+                unsigned int key = state.unique.keys[uniqueIdx];
+                state.beam.prefix_hashes[globalBeamIdx] = key & mask;
+                state.beam.last_tokens[globalBeamIdx] = state.unique.last_token[uniqueIdx];
 
-                int parent = state.unique_parent_idx[uniqueIdx];
-                int token = state.unique_token[uniqueIdx];
+                int parent = state.unique.parent_idx[uniqueIdx];
+                int token = state.unique.token[uniqueIdx];
 
                 int histIdx = time_step * config.batch_size * config.beam_width + globalBeamIdx;
-                state.history_parents[histIdx] = parent;
-                state.history_tokens[histIdx] = token;
+                state.beam.history_parents[histIdx] = parent;
+                state.beam.history_tokens[histIdx] = token;
              } else {
                  isValid = false;
              }
         }
         
         if (!isValid) {
-            state.prob_blank[globalBeamIdx] = NEG_INF;
-            state.prob_non_blank[globalBeamIdx] = NEG_INF;
-            state.prob_total[globalBeamIdx] = NEG_INF;
+            state.beam.prob_blank[globalBeamIdx] = NEG_INF;
+            state.beam.prob_non_blank[globalBeamIdx] = NEG_INF;
+            state.beam.prob_total[globalBeamIdx] = NEG_INF;
             int histIdx = time_step * config.batch_size * config.beam_width + globalBeamIdx;
-            state.history_parents[histIdx] = -1;
-            state.history_tokens[histIdx] = -1; 
+            state.beam.history_parents[histIdx] = -1;
+            state.beam.history_tokens[histIdx] = -1; 
         }
     }
 }

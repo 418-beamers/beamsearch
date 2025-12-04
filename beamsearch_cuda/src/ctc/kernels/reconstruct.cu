@@ -13,12 +13,12 @@ __global__ void reconstruct(
     
     int currentBeam = beamIdx;
     int len = 0;
-    int* myOutput = state.output_sequences + (batchIdx * config.beam_width + beamIdx) * config.max_output_length;
+    int* myOutput = state.output.sequences + (batchIdx * config.beam_width + beamIdx) * config.max_output_length;
     
     for (int t = config.max_time - 1; t >= 0; t--) {
         int histIdx = t * config.batch_size * config.beam_width + batchIdx * config.beam_width + currentBeam;
-        int token = state.history_tokens[histIdx];
-        int parent = state.history_parents[histIdx];
+        int token = state.beam.history_tokens[histIdx];
+        int parent = state.beam.history_parents[histIdx];
         
         if (token != -1 && token != config.blank_id) { 
              if (len < config.max_output_length) {
@@ -39,6 +39,6 @@ __global__ void reconstruct(
         myOutput[i] = -1;
     }
     
-    state.output_lengths[idx] = len;
+    state.output.lengths[idx] = len;
 }
 
