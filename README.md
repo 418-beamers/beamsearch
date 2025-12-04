@@ -24,7 +24,7 @@ By contrast, auto-regressive Beam search has a dependency between previously and
 In practice, CTC Beam search decoding is preferred for ASR (automatic speech recognition), especially in streaming/real-time applications, whereas auto-regressive Beam search is preferred for language models where the token dependencies matter more.
 
 # Setup
-Run the following commands to create a conda env ready to run the test harness (temporarily for CPU only)
+Run the following commands to create a conda env ready to run the test harness
 ```bash
 conda create -n beams python=3.10 -y
 conda activate beams
