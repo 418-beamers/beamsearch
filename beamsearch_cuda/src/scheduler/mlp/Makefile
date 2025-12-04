@@ -3,7 +3,7 @@ CXX      = g++
 CXXFLAGS = -O3 -std=c++17 -Wall -Wextra -march=native -ffast-math
 
 # Target executable name
-TARGET   = mlp_decay_scheduler
+TARGET   = mlp_decay_scheduler.o
 
 # Source files
 SRC      = mlp_decay_scheduler.cpp

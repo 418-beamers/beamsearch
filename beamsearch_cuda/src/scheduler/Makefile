@@ -3,17 +3,17 @@ CXX      = g++
 CXXFLAGS = -O3 -std=c++17 -Wall -Wextra -march=native -ffast-math
 
 # Targets
-BENCHMARK = benchmark
+BENCHMARK = benchmark.o
 
 # Source files
-BENCH_SRC = benchmark.cpp
+SRCS = benchmark.cpp scheduler.cpp mlp/mlp_decay_scheduler.cpp
 
 # Default target
 all: $(BENCHMARK)
 
 # Build benchmark
-$(BENCHMARK): $(BENCH_SRC)
-	$(CXX) $(CXXFLAGS) -o $(BENCHMARK) $(BENCH_SRC)
+$(BENCHMARK): $(SRCS) scheduler.h mlp/mlp_decay_scheduler.h
+	$(CXX) $(CXXFLAGS) -o $(BENCHMARK) $(SRCS)
 
 # Run the benchmark
 run: $(BENCHMARK)
