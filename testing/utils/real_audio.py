@@ -12,7 +12,7 @@ import torch
 import torchaudio
 from torchaudio.pipelines import WAV2VEC2_ASR_BASE_960H
 
-# for cleaner data pass-through
+# for cleaner data pass-through (shoutout Corey)
 @dataclass
 class RealAudioInputs:
     log_probs: torch.Tensor  # (B, T, V)
@@ -26,7 +26,7 @@ class RealAudioInputs:
 def get_sample_audio_url() -> str:
     return "https://www.voiptroubleshooter.com/open_speech/american/OSR_us_000_0010_8k.wav"
 
-def download_sample_audio(cache_dir) -> Path:
+def download_sample_audio(cache_dir=None) -> Path:
     
     if cache_dir is None:
         cache_dir = Path(tempfile.gettempdir()) / "ctc_decoder_test_audio"
@@ -148,7 +148,7 @@ def process_audio_with_wav2vec2(
 
 
 def generate_real_audio_inputs(
-    audio_path,
+    audio_path=None,
     device: torch.device = None,
     batch_size: int = 1,
     use_sample: bool = True,
