@@ -91,3 +91,22 @@ class MLPDecayScheduler {
     return res;
   }
 };
+
+int main() {
+    // example usage
+    MLPDecayScheduler net;
+    
+    if (!net.loadFromFile("mlp_weights.bin")) return -1;
+
+    std::vector<float> history = {0.2f, 0.1f, 0.3f}; 
+
+    Params p1 = net.query(history, 10.0f, 200.0f);
+    std::cout << "Query A (10-200): " 
+              << p1.A << "e^(" << p1.B << "x) + " << p1.C << std::endl;
+
+    Params p2 = net.query(history, 5.0f, 50.0f);
+    std::cout << "Query B (5-50):   " 
+              << p2.A << "e^(" << p2.B << "x) + " << p2.C << std::endl;
+
+    return 0;
+}
