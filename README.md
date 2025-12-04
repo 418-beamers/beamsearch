@@ -115,12 +115,7 @@ python testing/ctc_decoder_test.py --real --candidate-device cuda
 
 or with your own .wav file
 ```bash
-python testing/ctc_decoder_test.py --real --audio-file /path/to/audio.wav --candidate-device cuda
-```
-
-Run with verbose output to see full decoded transcriptions:
-```bash
-python testing/ctc_decoder_test.py --real --verbose --candidate-device cuda
+python testing/ctc_decoder_test.py --real --audio-file ~/beamsearch/testing/beamers_sample.wav --candidate-device cuda
 ```
 
 Real audio mode uses the Wav2Vec2 ASR model from torchaudio to generate CTC log probabilities from actual speech.
