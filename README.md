@@ -1,22 +1,3 @@
-# Setup
-Run the following commands to create a conda env ready to run the test harness (temporarily for CPU only)
-```bash
-conda create -n beams python=3.10 -y
-conda activate beams
-python -m pip install --upgrade pip setuptools wheel ninja
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-python -m pip install flashlight-text rich
-```
-
-Might also have to run these to add CUDA toolkit to path: 
-```
-export CUDA_HOME=/usr/local/cuda-12.4
-export PATH=$CUDA_HOME/bin:$PATH
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
-```
-
-can run `python testing/env_test.py` to validate that the basic libraries n     ecessary for the project are present
-
 # Interface
 Let: 
 - B: batch_size, 
@@ -42,21 +23,78 @@ By contrast, auto-regressive Beam search has a dependency between previously and
 
 In practice, CTC Beam search decoding is preferred for ASR (automatic speech recognition), especially in streaming/real-time applications, whereas auto-regressive Beam search is preferred for language models where the token dependencies matter more.
 
-### Decoder Test Arguments
+# Setup
+Run the following commands to create a conda env ready to run the test harness
+```bash
+conda create -n beams python=3.10 -y
+conda activate beams
+python -m pip install --upgrade pip setuptools wheel ninja
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+python -m pip install flashlight-text rich soundfile
+```
+
+Might also have to run these to add CUDA toolkit to path: 
+```
+export CUDA_HOME=/usr/local/cuda-12.4
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+```
+
+can run `python testing/env_test.py` to validate that the basic libraries necessary for the project are present
+
+# Quickstart
+
+## Building CUDA Extension 
+
+Install the extension by running:
+```bash
+pip install -e beamsearch_cuda/ --no-build-isolation
+```
+
+Verify CUDA toolchain with hello-world extension:
+```bash
+python testing/ctc_decoder_test.py --hello
+```
+
+Run synthetic benchmark:
+```bash
+python testing/ctc_decoder_test.py --candidate-device cuda
+```
+
+Run real audio test:
+```bash
+python testing/ctc_decoder_test.py --real --candidate-device cuda --verbose
+```
+
+# Testing Module
 
 The `testing/ctc_decoder_test.py` script accepts several arguments to control the test parameters:
 
-- `--batch-size`: Batch size for the input (default: 2).
-- `--time-steps`: Length of the input sequences (default: 120).
-- `--vocab-size`: Size of the vocabulary (default: 32).
-- `--beam-width`: Width of the beam for the search (default: 50).
-- `--top-k`: Number of top hypotheses to return (default: 3).
-- `--candidate-device`: Device to run the candidate decoder on (`cuda`). If not specified, only the reference decoder runs (on CPU).
-- `--seed`: Manual seed for reproducibility (default: 0).
-- `--timing-runs`: Number of timing repetitions per decoder (default: 3).
-- `--verbose`: Print decoded sequences and similarity metrics, in addition to the summary table.
+**Input Generation:**
+- `--batch-size`: Batch size for the input (default: 2)
+- `--time-steps`: Length of the input sequences (default: 120)
+- `--vocab-size`: Size of the vocabulary (default: 32)
+- `--seed`: Manual seed for reproducibility (default: 0)
+
+**Decoder Options:**
+- `--beam-width`: Width of the beam for the search (default: 50)
+- `--top-k`: Number of top hypotheses to return (default: 3)
+- `--candidate-device`: Device to run the candidate decoder on (`cuda`). If not specified, only the reference decoder runs (on CPU)
+
+**Timing:**
+- `--timing-runs`: Number of timing repetitions per decoder (default: 3)
+
+**Real Audio Mode:**
+- `--real`: Use real audio with pre-trained Wav2Vec2 ASR model instead of synthetic data
+- `--audio-file`: Path to audio file for real mode (if not provided, downloads a sample)
+
+**Other:**
+- `--verbose`: Print decoded sequences and similarity metrics
+- `--hello`: Run hello-world CUDA extension for toolchain verification
 
 ### Example Usage
+
+**Synthetic Data (Default)**
 
 Run with custom parameters:
 ```bash
@@ -68,37 +106,34 @@ Run only the reference decoder:
 python testing/ctc_decoder_test.py --batch-size 2
 ```
 
-# Running the tests 
-Install the extension:
+**Real Audio Mode**
 
+Run with a sample .wav (audio) file (auto-downloaded):
 ```bash
-pip install -e beamsearch_cuda/ --no-build-isolation
+python testing/ctc_decoder_test.py --real --candidate-device cuda
 ```
 
-Run the tests:
+or with your own .wav file
 ```bash
-python testing/ctc_decoder_test.py --candidate-device cuda
+python testing/ctc_decoder_test.py --real --audio-file ~/beamsearch/testing/beamers_sample.wav --candidate-device cuda
 ```
 
-# CTC Beam Search Usage
+Real audio mode uses the Wav2Vec2 ASR model from torchaudio to generate CTC log probabilities from actual speech.
 
-`beamsearch_cuda.beam_search.ctc_beam_search` runs the CUDA decoder on tensors passed for 
-`log_probs` and `input_lengths`. 
+## Test Module Structure
 
-Example usage:
+The testing harness is organized into modular components under `testing/utils/`:
 
-```python
-import torch
-from beamsearch_cuda import beam_search
-
-log_probs = torch.randn(2, 8, 32, device="cuda").log_softmax(-1)
-lengths = torch.tensor([8, 6], dtype=torch.int32, device="cuda")
-
-beam_search.ctc_beam_search(
-    log_probs=log_probs,
-    input_lengths=lengths,
-    beam_width=4,
-    blank_idx=0,
-    top_k=2,
-)
+```
+testing/
+├── ctc_decoder_test.py    # main test script
+├── env_test.py            # environment validation
+└── utils/
+    ├── __init__.py        # module exports
+    ├── timing.py          # benchmarking utilities (run_timed, print_timing_table)
+    ├── similarity.py      # distance metrics (levenshtein, edit distance)
+    ├── tokenization.py    # vocab handling (make_tokens, detokenize, formatting)
+    ├── loaders.py         # extension loading (load_candidate_module, load_hello_extension)
+    ├── inputs.py          # synthetic input generation
+    └── real_audio.py      # Wav2Vec2 audio processing for real ASR testing
 ```
