@@ -18,11 +18,36 @@
 #include <thrust/gather.h>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 CTCBeamSearch::CTCBeamSearch(const CTCBeamSearchConfig& config) : config_(config) {
     cudaError_t err = allocate_state();
     if (err != cudaSuccess) {
         throw std::runtime_error("Failed to allocate CTC beam search state: " + std::string(cudaGetErrorString(err)));
+    }
+
+    if (config_.schedule.adaptive_beam_width) {
+        switch (config_.schedule.schedule_type) {
+            case SchedulerType::LUT: {
+                lut_scheduler_ = std::make_unique<DecayScheduleGenerator>(0, 0, 0.0f);
+                if (config_.schedule.lut_path.empty() ||
+                    !lut_scheduler_->loadFromBinary(config_.schedule.lut_path)) {
+                    throw std::runtime_error("LUT scheduler requires valid lut_path");
+                }
+                break;
+            }
+            case SchedulerType::MLP: {
+                mlp_scheduler_ = std::make_unique<MLPDecayScheduler>();
+                if (config_.schedule.mlp_path.empty() || 
+                    !mlp_scheduler_->loadFromFile(config_.schedule.mlp_path)) {
+                        throw std::runtime_error("MLP scheduler requires valid mlp_path");
+                    }
+                break;
+            }
+            case SchedulerType::NAIVE:
+            default:
+                break;
+        }
     }
 }
 
@@ -58,8 +83,62 @@ void CTCBeamSearch::initialize(cudaStream_t stream) {
     ::initialize<<<blocks, threads, 0, stream>>>(state_, config_);
 }
 
+int CTCBeamSearch::compute_beam_width(int t, float current_entropy) {
+    int beam_width;
+
+    if (!config_.schedule.adaptive_beam_width) {
+        return config_.beam_width;
+    }
+
+    if (t < config_.schedule.init_steps) {
+        return config_.schedule.init;
+    }
+
+    switch (config_.schedule.scheduler_type) {
+        case SchedulerType::LUT: {
+                Params paramns = lut_scheduler_->query(
+                    t,
+                    entropy_history_,
+                    config_.schedule.min,
+                    config_.beam_width
+                );
+                float dt = (float)(t - config_.schedule.init_steps);
+                float w = params.A * expf(params.B * dt) + params.C;
+                beam_width = (int)w;
+                break;
+            }
+        case SchedulerType::MLP: {
+                int input_size = mlp_scheduler_->getInputSize();
+                std::vector<float> mlp_input(input_size);
+
+                Params params = mlp_scheduler_->query(
+                    mlp_input,
+                    (float)config_.schedule.min,
+                    (float)config_.beam_width
+                );
+                float dt = (float)(t - config_.schedule.init_steps);
+                float w params.A * expf(params.B * dt) + params.C;
+                beam_width = (int)w;
+                break;
+            }
+        case SchedulerType::NAIVE:
+        default: {
+            float dt = (float)(t - config_.schedule.init_steps);
+            float w = config_.schedule.a * expf(-config.schedule.b * dt) + config_.schedule.c;
+            beam_width = (int)w;
+            break;
+        }
+    }
+
+    if (beam_width < config_.schedule.min) beam_width = config_.schedule.min;
+    if (beam_width > confing_.beam_width)  beam_width = config_.beam_width;
+
+    return beam_width;
+}
+
 void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cudaStream_t stream) {
     int current_beam_width;
+    entropy_history_.clear();
 
     // We must initialize current_beam_width correctly before the first iteration
     // If adaptive, start with config_.schedule.init, otherwise config_.beam_width
@@ -70,20 +149,11 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
     }
     
     for (int t = 0; t < config_.max_time; ++t) {
-        
-        if (config_.schedule.adaptive_beam_width) {
-            if (t < config_.schedule.init_steps) {
-                current_beam_width = config_.schedule.init;
-            } else {
-                float dt = (float)(t - config_.schedule.init_steps);
-                float w = config_.schedule.a * expf(-config_.schedule.b * dt) + config_.schedule.c;
-                current_beam_width = (int)w;
-                if (current_beam_width < config_.schedule.min) current_beam_width = config_.schedule.min;
-                if (current_beam_width > config_.beam_width) current_beam_width = config_.beam_width;
-            }
-        } else {
-            current_beam_width = config_.beam_width;
-        }
+
+        float placeholder_entropy = 0.0f;
+        entropy_history_.push_back(placeholder_entropy);
+
+        current_beam_width = compute_beam_width(t, placeholder_entropy);
 
         int num_active_beams = config_.batch_size * current_beam_width;
         int num_active_candidates = num_active_beams * config_.num_classes;
