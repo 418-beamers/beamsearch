@@ -47,9 +47,9 @@ __global__ void top_k(
              int uniqueIdx = state.unique.indices[sortedIdx];
              
              if (static_cast<int>(state.unique.keys[uniqueIdx] >> config.hash_bits) == batchIdx) {
-                state.beam.prob_blank[globalBeamIdx] = state.unique.prob_blank[uniqueIdx];
-                state.beam.prob_non_blank[globalBeamIdx] = state.unique.prob_non_blank[uniqueIdx];
-                state.beam.prob_total[globalBeamIdx] = state.unique.prob_total[uniqueIdx];
+                state.beam.score_blank[globalBeamIdx] = state.unique.score_blank[uniqueIdx];
+                state.beam.score_non_blank[globalBeamIdx] = state.unique.score_non_blank[uniqueIdx];
+                state.beam.score_total[globalBeamIdx] = state.unique.score_total[uniqueIdx];
 
                 unsigned int key = state.unique.keys[uniqueIdx];
                 state.beam.prefix_hashes[globalBeamIdx] = key & mask;
@@ -67,9 +67,9 @@ __global__ void top_k(
         }
         
         if (!isValid) {
-            state.beam.prob_blank[globalBeamIdx] = NEG_INF;
-            state.beam.prob_non_blank[globalBeamIdx] = NEG_INF;
-            state.beam.prob_total[globalBeamIdx] = NEG_INF;
+            state.beam.score_blank[globalBeamIdx] = NEG_INF;
+            state.beam.score_non_blank[globalBeamIdx] = NEG_INF;
+            state.beam.score_total[globalBeamIdx] = NEG_INF;
             int histIdx = time_step * config.batch_size * config.beam_width + globalBeamIdx;
             state.beam.history_parents[histIdx] = -1;
             state.beam.history_tokens[histIdx] = -1; 

@@ -43,9 +43,9 @@ struct CTCBeamSearchConfig {
 };
 
 struct BeamState {
-    float* prob_blank;       
-    float* prob_non_blank;    
-    float* prob_total;       
+    float* score_blank;       
+    float* score_non_blank;    
+    float* score_total;       
     unsigned int* prefix_hashes; 
     int* current_lengths;    
     int* last_tokens;        
@@ -55,8 +55,8 @@ struct BeamState {
 
 struct CandidateState {
     unsigned int* keys;   
-    float* prob_blank;
-    float* prob_non_blank;
+    float* score_blank;
+    float* score_non_blank;
     int* parent_idx;     
     int* token;         
     int* last_token;     
@@ -66,9 +66,9 @@ struct CandidateState {
 
 struct UniqueState {
     unsigned int* keys;
-    float* prob_blank;
-    float* prob_non_blank;
-    float* prob_total;
+    float* score_blank;
+    float* score_non_blank;
+    float* score_total;
     int* parent_idx;
     int* token;
     int* last_token;

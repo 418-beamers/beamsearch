@@ -59,7 +59,7 @@ void CTCBeamSearch::decode(const float* log_probs, const int* input_lengths, cud
     initialize(stream);
     launch(log_probs, input_lengths, stream);
     reconstruct(stream);
-    cudaMemcpyAsync(state_.output.scores, state_.beam.prob_total, 
+    cudaMemcpyAsync(state_.output.scores, state_.beam.score_total, 
                     config_.batch_size * config_.beam_width * sizeof(float), cudaMemcpyDeviceToDevice, stream);
 }
 
@@ -96,7 +96,7 @@ int CTCBeamSearch::compute_beam_width(int t, float current_entropy) {
 
     switch (config_.schedule.scheduler_type) {
         case SchedulerType::LUT: {
-                Params paramns = lut_scheduler_->query(
+                Params params = lut_scheduler_->query(
                     t,
                     entropy_history_,
                     config_.schedule.min,
@@ -131,7 +131,7 @@ int CTCBeamSearch::compute_beam_width(int t, float current_entropy) {
     }
 
     if (beam_width < config_.schedule.min) beam_width = config_.schedule.min;
-    if (beam_width > confing_.beam_width)  beam_width = config_.beam_width;
+    if (beam_width > config_.beam_width)  beam_width = config_.beam_width;
 
     return beam_width;
 }
@@ -140,8 +140,7 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
     int current_beam_width;
     entropy_history_.clear();
 
-    // We must initialize current_beam_width correctly before the first iteration
-    // If adaptive, start with config_.schedule.init, otherwise config_.beam_width
+    // if adaptive, start with config_.schedule.init, otherwise config_.beam_width
     if (config_.schedule.adaptive_beam_width) {
         current_beam_width = config_.schedule.init;
     } else {
@@ -149,11 +148,15 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
     }
     
     for (int t = 0; t < config_.max_time; ++t) {
-
+        
+        // vvvvvvvv
+        // insert real entropy logic here
         float placeholder_entropy = 0.0f;
         entropy_history_.push_back(placeholder_entropy);
 
         current_beam_width = compute_beam_width(t, placeholder_entropy);
+
+        // ^^^^^^^^^ 
 
         int num_active_beams = config_.batch_size * current_beam_width;
         int num_active_candidates = num_active_beams * config_.num_classes;
@@ -179,12 +182,12 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
         );
 
         auto perm_pb = thrust::make_permutation_iterator(
-            thrust::device_ptr<float>(state_.cand.prob_blank),
+            thrust::device_ptr<float>(state_.cand.score_blank),
             thrust::device_ptr<int>(state_.cand.indices_sorted)
         );
         
         auto perm_pnb = thrust::make_permutation_iterator(
-            thrust::device_ptr<float>(state_.cand.prob_non_blank),
+            thrust::device_ptr<float>(state_.cand.score_non_blank),
             thrust::device_ptr<int>(state_.cand.indices_sorted)
         );
 
@@ -195,8 +198,8 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
         ));
 
         auto values_out = thrust::make_zip_iterator(thrust::make_tuple(
-            thrust::device_ptr<float>(state_.unique.prob_blank),
-            thrust::device_ptr<float>(state_.unique.prob_non_blank),
+            thrust::device_ptr<float>(state_.unique.score_blank),
+            thrust::device_ptr<float>(state_.unique.score_non_blank),
             thrust::device_ptr<int>(state_.unique.indices)
         ));
 
@@ -208,7 +211,7 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
             thrust::device_ptr<unsigned int>(state_.unique.keys),
             values_out,
             thrust::equal_to<unsigned int>(),
-            ProbAndIndexReduce()
+            ScoreAndIndexReduce()
         );
         
         int num_unique = new_end.first - thrust::device_ptr<unsigned int>(state_.unique.keys);
@@ -237,17 +240,17 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
              thrust::device_ptr<int>(state_.unique.parent_idx) 
         );
 
-        auto unique_prob_zip = thrust::make_zip_iterator(thrust::make_tuple(
-            thrust::device_ptr<float>(state_.unique.prob_blank),
-            thrust::device_ptr<float>(state_.unique.prob_non_blank)
+        auto unique_score_zip = thrust::make_zip_iterator(thrust::make_tuple(
+            thrust::device_ptr<float>(state_.unique.score_blank),
+            thrust::device_ptr<float>(state_.unique.score_non_blank)
         ));
 
         thrust::transform(
             thrust::cuda::par.on(stream),
-            unique_prob_zip,
-            unique_prob_zip + num_unique,
-            thrust::device_ptr<float>(state_.unique.prob_total),
-            CalcTotalProb()
+            unique_score_zip,
+            unique_score_zip + num_unique,
+            thrust::device_ptr<float>(state_.unique.score_total),
+            CalcTotalScore()
         );
 
         thrust::sequence(
@@ -260,7 +263,7 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
             thrust::cuda::par.on(stream),
             thrust::device_ptr<int>(state_.unique.indices),
             thrust::device_ptr<int>(state_.unique.indices) + num_unique,
-            BatchScoreComp(state_.unique.keys, state_.unique.prob_total, config_.hash_bits)
+            BatchScoreComp(state_.unique.keys, state_.unique.score_total, config_.hash_bits)
         );
 
         ::top_k<<<config_.batch_size, 256, 0, stream>>>(
@@ -280,9 +283,9 @@ cudaError_t CTCBeamSearch::allocate_state() {
     int num_beams = config_.batch_size * config_.beam_width;
     int num_candidates = num_beams * config_.num_classes;
     
-    cudaMalloc(&state_.beam.prob_blank, num_beams * sizeof(float));
-    cudaMalloc(&state_.beam.prob_non_blank, num_beams * sizeof(float));
-    cudaMalloc(&state_.beam.prob_total, num_beams * sizeof(float));
+    cudaMalloc(&state_.beam.score_blank, num_beams * sizeof(float));
+    cudaMalloc(&state_.beam.score_non_blank, num_beams * sizeof(float));
+    cudaMalloc(&state_.beam.score_total, num_beams * sizeof(float));
     cudaMalloc(&state_.beam.prefix_hashes, num_beams * sizeof(unsigned int));
     cudaMalloc(&state_.beam.current_lengths, num_beams * sizeof(int));
     cudaMalloc(&state_.beam.last_tokens, num_beams * sizeof(int));
@@ -291,8 +294,8 @@ cudaError_t CTCBeamSearch::allocate_state() {
     cudaMalloc(&state_.beam.history_tokens, config_.max_time * num_beams * sizeof(int));
     
     cudaMalloc(&state_.cand.keys, num_candidates * sizeof(unsigned int));
-    cudaMalloc(&state_.cand.prob_blank, num_candidates * sizeof(float));
-    cudaMalloc(&state_.cand.prob_non_blank, num_candidates * sizeof(float));
+    cudaMalloc(&state_.cand.score_blank, num_candidates * sizeof(float));
+    cudaMalloc(&state_.cand.score_non_blank, num_candidates * sizeof(float));
     cudaMalloc(&state_.cand.parent_idx, num_candidates * sizeof(int));
     cudaMalloc(&state_.cand.token, num_candidates * sizeof(int));
     cudaMalloc(&state_.cand.last_token, num_candidates * sizeof(int));
@@ -301,9 +304,9 @@ cudaError_t CTCBeamSearch::allocate_state() {
     cudaMalloc(&state_.cand.indices_sorted, num_candidates * sizeof(int));
     
     cudaMalloc(&state_.unique.keys, num_candidates * sizeof(unsigned int));
-    cudaMalloc(&state_.unique.prob_blank, num_candidates * sizeof(float));
-    cudaMalloc(&state_.unique.prob_non_blank, num_candidates * sizeof(float));
-    cudaMalloc(&state_.unique.prob_total, num_candidates * sizeof(float));
+    cudaMalloc(&state_.unique.score_blank, num_candidates * sizeof(float));
+    cudaMalloc(&state_.unique.score_non_blank, num_candidates * sizeof(float));
+    cudaMalloc(&state_.unique.score_total, num_candidates * sizeof(float));
     cudaMalloc(&state_.unique.parent_idx, num_candidates * sizeof(int));
     cudaMalloc(&state_.unique.token, num_candidates * sizeof(int));
     cudaMalloc(&state_.unique.last_token, num_candidates * sizeof(int));
@@ -317,26 +320,26 @@ cudaError_t CTCBeamSearch::allocate_state() {
 }
 
 void CTCBeamSearch::free_state() {
-    cudaFree(state_.beam.prob_blank);
-    cudaFree(state_.beam.prob_non_blank);
-    cudaFree(state_.beam.prob_total);
+    cudaFree(state_.beam.score_blank);
+    cudaFree(state_.beam.score_non_blank);
+    cudaFree(state_.beam.score_total);
     cudaFree(state_.beam.prefix_hashes);
     cudaFree(state_.beam.current_lengths);
     cudaFree(state_.beam.last_tokens);
     cudaFree(state_.beam.history_parents);
     cudaFree(state_.beam.history_tokens);
     cudaFree(state_.cand.keys);
-    cudaFree(state_.cand.prob_blank);
-    cudaFree(state_.cand.prob_non_blank);
+    cudaFree(state_.cand.score_blank);
+    cudaFree(state_.cand.score_non_blank);
     cudaFree(state_.cand.parent_idx);
     cudaFree(state_.cand.token);
     cudaFree(state_.cand.last_token);
     cudaFree(state_.cand.keys_sorted);
     cudaFree(state_.cand.indices_sorted);
     cudaFree(state_.unique.keys);
-    cudaFree(state_.unique.prob_blank);
-    cudaFree(state_.unique.prob_non_blank);
-    cudaFree(state_.unique.prob_total);
+    cudaFree(state_.unique.score_blank);
+    cudaFree(state_.unique.score_non_blank);
+    cudaFree(state_.unique.score_total);
     cudaFree(state_.unique.parent_idx);
     cudaFree(state_.unique.token);
     cudaFree(state_.unique.last_token);
