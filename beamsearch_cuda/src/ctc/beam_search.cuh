@@ -3,6 +3,16 @@
 
 #include <cuda_runtime.h>
 
+struct BeamSchedule {
+    bool adaptive_beam_width;
+    float a;
+    float b;
+    float c;
+    int min;
+    int init;
+    int init_steps;
+};
+
 struct CTCBeamSearchConfig {
     int batch_size;
     int beam_width;
@@ -12,41 +22,54 @@ struct CTCBeamSearchConfig {
     int blank_id;
     int batch_bits;
     int hash_bits;
+
+    BeamSchedule schedule;
 };
 
-struct CTCBeamSearchState {
+struct BeamState {
     float* prob_blank;       
     float* prob_non_blank;    
     float* prob_total;       
     unsigned int* prefix_hashes; 
     int* current_lengths;    
     int* last_tokens;        
-
     int* history_parents;    
     int* history_tokens;     
+};
 
-    unsigned int* cand_keys;   
-    float* cand_prob_blank;
-    float* cand_prob_non_blank;
-    int* cand_parent_idx;     
-    int* cand_token;         
-    int* cand_last_token;     
-    
-    unsigned int* cand_keys_sorted;
-    int* cand_indices_sorted; 
+struct CandidateState {
+    unsigned int* keys;   
+    float* prob_blank;
+    float* prob_non_blank;
+    int* parent_idx;     
+    int* token;         
+    int* last_token;     
+    unsigned int* keys_sorted;
+    int* indices_sorted; 
+};
 
-    unsigned int* unique_keys;
-    float* unique_prob_blank;
-    float* unique_prob_non_blank;
-    float* unique_prob_total;
-    int* unique_parent_idx;
-    int* unique_token;
-    int* unique_last_token;
-    int* unique_indices; 
-    
-    int* output_sequences;   
-    int* output_lengths;
-    float* output_scores;
+struct UniqueState {
+    unsigned int* keys;
+    float* prob_blank;
+    float* prob_non_blank;
+    float* prob_total;
+    int* parent_idx;
+    int* token;
+    int* last_token;
+    int* indices; 
+};
+
+struct OutputState {
+    int* sequences;   
+    int* lengths;
+    float* scores;
+};
+
+struct CTCBeamSearchState {
+    BeamState beam;
+    CandidateState cand;
+    UniqueState unique;
+    OutputState output;
 };
 
 class CTCBeamSearch {

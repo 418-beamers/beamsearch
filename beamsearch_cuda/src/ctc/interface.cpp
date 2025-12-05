@@ -16,7 +16,8 @@ uintptr_t create(
     int max_output_length,
     int blank_id,
     int batch_bits,
-    int hash_bits
+    int hash_bits,
+    BeamSchedule schedule_in
 ) {
     CTCBeamSearchConfig config;
     config.batch_size = batch_size;
@@ -27,6 +28,7 @@ uintptr_t create(
     config.blank_id = blank_id;
     config.batch_bits = batch_bits;
     config.hash_bits = hash_bits;
+    config.schedule = schedule_in;
 
     CTCBeamSearch* decoder = new CTCBeamSearch(config);
     return reinterpret_cast<uintptr_t>(decoder);
@@ -87,6 +89,16 @@ void free_state(uintptr_t state_ptr) {
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    pybind11::class_<BeamSchedule>(m, "BeamSchedule")
+        .def(pybind11::init<bool, float, float, float, int, int, int>())
+        .def_readwrite("adaptive_beam_width", &BeamSchedule::adaptive_beam_width)
+        .def_readwrite("a", &BeamSchedule::a)
+        .def_readwrite("b", &BeamSchedule::b)
+        .def_readwrite("c", &BeamSchedule::c)
+        .def_readwrite("min", &BeamSchedule::min)
+        .def_readwrite("init", &BeamSchedule::init)
+        .def_readwrite("init_steps", &BeamSchedule::init_steps);
+
     m.def("create", &create, "Create state");
     m.def("decode", &decode, "Decode sequences");
     m.def("free_state", &free_state, "Free state");

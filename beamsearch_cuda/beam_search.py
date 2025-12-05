@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, NamedTuple
 import math
 import torch
 from torch.utils.cpp_extension import load
@@ -7,31 +7,37 @@ from torch.utils.cpp_extension import load
 
 _MODULE = None
 
+class BeamSchedule(NamedTuple):
+    adaptive_beam_width: bool = False
+    a: float = 0.0
+    b: float = 0.0
+    c: float = 0.0
+    min: int = 0
+    init: int = 0
+    init_steps: int = 0
+
 def _load_ctc_extension():
     global _MODULE
 
     if _MODULE is None:
-        try:
-            import beamsearch_cuda_native as _MODULE
-        except ImportError:
-            base_dir = Path(__file__).resolve().parent
-            src_dir = base_dir / "src" / "ctc"
+        base_dir = Path(__file__).resolve().parent
+        src_dir = base_dir / "src" / "ctc"
 
-            sources = [
-                src_dir / "interface.cpp",
-                src_dir / "beam_search.cu",
-                src_dir / "kernels" / "initialize.cu",
-                src_dir / "kernels" / "expand.cu",
-                src_dir / "kernels" / "top_k.cu",
-                src_dir / "kernels" / "reconstruct.cu",
-            ]
+        sources = [
+            src_dir / "interface.cpp",
+            src_dir / "beam_search.cu",
+            src_dir / "kernels" / "initialize.cu",
+            src_dir / "kernels" / "expand.cu",
+            src_dir / "kernels" / "top_k.cu",
+            src_dir / "kernels" / "reconstruct.cu",
+        ]
 
-            _MODULE = load(
-                name="beamsearch_cuda_native",
-                sources=[str(path) for path in sources],
-                extra_include_paths=[str(src_dir)],
-                verbose=False,
-            )
+        _MODULE = load(
+            name="beamsearch_cuda_native",
+            sources=[str(path) for path in sources],
+            extra_include_paths=[str(src_dir)],
+            verbose=False,
+        )
 
     return _MODULE
 
@@ -72,13 +78,18 @@ class CTCBeamSearchDecoder:
         blank_id: int = 0,
         batch_size: int = 1,
         max_time: int = 100,
+        schedule: BeamSchedule = None,
     ):
+        if schedule is None:
+            schedule = BeamSchedule()
+
         self.beam_width = beam_width
         self.num_classes = num_classes
         self.max_output_length = max_output_length
         self.blank_id = blank_id
         self.batch_size = batch_size
         self.max_time = max_time
+        self.schedule = schedule
         self._ext = _load_ctc_extension()
 
         batch_bits = math.ceil(math.log2(batch_size)) if batch_size > 1 else 1
@@ -86,6 +97,16 @@ class CTCBeamSearchDecoder:
         
         if hash_bits < 1:
              raise ValueError(f"Batch size {batch_size} is too large to fit in 32-bit key with any hash bits left.")
+
+        schedule_config = self._ext.BeamSchedule(
+            schedule.adaptive_beam_width,
+            schedule.a,
+            schedule.b,
+            schedule.c,
+            schedule.min,
+            schedule.init,
+            schedule.init_steps,
+        )
 
         self.state_ptr = self._ext.create(
             batch_size,
@@ -96,6 +117,7 @@ class CTCBeamSearchDecoder:
             blank_id,
             batch_bits,
             hash_bits,
+            schedule_config,
         )
 
     def __del__(self):
@@ -152,6 +174,7 @@ def ctc_beam_search_decode(
     beam_width: int = 10,
     blank_id: int = 0,
     input_lengths: torch.Tensor = None,
+    schedule: BeamSchedule = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     batch_size, max_time, num_classes = log_probs.shape
 
@@ -162,6 +185,7 @@ def ctc_beam_search_decode(
         blank_id=blank_id,
         batch_size=batch_size,
         max_time=max_time,
+        schedule=schedule,
     )
 
     return decoder.decode(log_probs, input_lengths)
@@ -172,6 +196,7 @@ def ctc_beam_search(
     beam_width: int,
     blank_idx: int,
     top_k: int,
+    schedule: BeamSchedule = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
 
     _validate_log_probs(log_probs)
@@ -189,6 +214,7 @@ def ctc_beam_search(
         blank_id=blank_idx,
         batch_size=batch_size,
         max_time=max_time,
+        schedule=schedule,
     )
 
     sequences, _, scores = decoder.decode(log_probs, prepared_lengths)
@@ -205,4 +231,4 @@ def ctc_beam_search(
     
     return hypotheses, top_scores
 
-__all__ = ["CTCBeamSearchDecoder", "ctc_beam_search_decode", "ctc_beam_search"]
+__all__ = ["CTCBeamSearchDecoder", "ctc_beam_search_decode", "ctc_beam_search", "BeamSchedule"]

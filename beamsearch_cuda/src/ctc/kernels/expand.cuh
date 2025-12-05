@@ -9,7 +9,8 @@ __global__ void expand(
     CTCBeamSearchConfig config,
     const float* log_probs, 
     const int* input_lengths,
-    int time_step
+    int time_step,
+    int current_beam_width
 );
 
 #endif
