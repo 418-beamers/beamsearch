@@ -71,6 +71,15 @@ def parse_args():
         action="store_true",
         help="print decoded sequences",
     )
+    
+    parser.add_argument("--adaptive-beam-width", action="store_true", help="enable adaptive beam width")
+    parser.add_argument("--schedule-a", type=float, default=0.0, help="schedule param a")
+    parser.add_argument("--schedule-b", type=float, default=0.0, help="schedule param b")
+    parser.add_argument("--schedule-c", type=float, default=0.0, help="schedule param c")
+    parser.add_argument("--schedule-min", type=int, default=0, help="schedule min beam width")
+    parser.add_argument("--schedule-init", type=int, default=0, help="schedule initial beam width")
+    parser.add_argument("--schedule-init-steps", type=int, default=0, help="steps before decay starts")
+
     return parser.parse_args()
 
 
@@ -427,9 +436,21 @@ def main():
     ):
 
         CTCBeamSearchDecoder = candidate_module.CTCBeamSearchDecoder
+        BeamSchedule = candidate_module.BeamSchedule
 
         log_probs_candidate = log_probs_btv.to(candidate_device)
         input_lengths_candidate = input_lengths.to(device=candidate_device, dtype=torch.int32)
+
+        # Create schedule from args
+        schedule = BeamSchedule(
+            adaptive_beam_width=args.adaptive_beam_width,
+            a=args.schedule_a,
+            b=args.schedule_b,
+            c=args.schedule_c,
+            min=args.schedule_min,
+            init=args.schedule_init,
+            init_steps=args.schedule_init_steps
+        )
 
         try:
             candidate_decoder = CTCBeamSearchDecoder(
@@ -439,6 +460,7 @@ def main():
                 blank_id=blank_idx,
                 batch_size=args.batch_size,
                 max_time=args.time_steps,
+                schedule=schedule,
             )
 
             (sequences, lengths, scores), candidate_timing = run_timed(

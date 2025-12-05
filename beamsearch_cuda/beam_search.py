@@ -20,27 +20,24 @@ def _load_ctc_extension():
     global _MODULE
 
     if _MODULE is None:
-        try:
-            import beamsearch_cuda_native as _MODULE
-        except ImportError:
-            base_dir = Path(__file__).resolve().parent
-            src_dir = base_dir / "src" / "ctc"
+        base_dir = Path(__file__).resolve().parent
+        src_dir = base_dir / "src" / "ctc"
 
-            sources = [
-                src_dir / "interface.cpp",
-                src_dir / "beam_search.cu",
-                src_dir / "kernels" / "initialize.cu",
-                src_dir / "kernels" / "expand.cu",
-                src_dir / "kernels" / "top_k.cu",
-                src_dir / "kernels" / "reconstruct.cu",
-            ]
+        sources = [
+            src_dir / "interface.cpp",
+            src_dir / "beam_search.cu",
+            src_dir / "kernels" / "initialize.cu",
+            src_dir / "kernels" / "expand.cu",
+            src_dir / "kernels" / "top_k.cu",
+            src_dir / "kernels" / "reconstruct.cu",
+        ]
 
-            _MODULE = load(
-                name="beamsearch_cuda_native",
-                sources=[str(path) for path in sources],
-                extra_include_paths=[str(src_dir)],
-                verbose=False,
-            )
+        _MODULE = load(
+            name="beamsearch_cuda_native",
+            sources=[str(path) for path in sources],
+            extra_include_paths=[str(src_dir)],
+            verbose=False,
+        )
 
     return _MODULE
 
@@ -101,6 +98,16 @@ class CTCBeamSearchDecoder:
         if hash_bits < 1:
              raise ValueError(f"Batch size {batch_size} is too large to fit in 32-bit key with any hash bits left.")
 
+        schedule_config = self._ext.BeamSchedule(
+            schedule.adaptive_beam_width,
+            schedule.a,
+            schedule.b,
+            schedule.c,
+            schedule.min,
+            schedule.init,
+            schedule.init_steps,
+        )
+
         self.state_ptr = self._ext.create(
             batch_size,
             beam_width,
@@ -110,13 +117,7 @@ class CTCBeamSearchDecoder:
             blank_id,
             batch_bits,
             hash_bits,
-            schedule.adaptive_beam_width,
-            schedule.a,
-            schedule.b,
-            schedule.c,
-            schedule.min,
-            schedule.init,
-            schedule.init_steps,
+            schedule_config,
         )
 
     def __del__(self):
