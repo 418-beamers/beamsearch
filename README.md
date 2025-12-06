@@ -38,6 +38,7 @@ Might also have to run these to add CUDA toolkit to path:
 export CUDA_HOME=/usr/local/cuda-12.4
 export PATH=$CUDA_HOME/bin:$PATH
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+export TORCH_CUDA_ARCH_LIST="7.5"
 ```
 
 can run `python testing/env_test.py` to validate that the basic libraries necessary for the project are present
