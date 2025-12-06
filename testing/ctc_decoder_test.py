@@ -626,57 +626,7 @@ def _run_candidate_decoder(
 
         candidate_decoded_texts = format_candidate_outputs(
             candidate_hypotheses, candidate_lengths, tokens, blank_idx, args.top_k
-        print(
-            "\nbeamsearch_cuda not importable or missing `CTCBeamSearchDecoder`, "
-            "or candidate device is not CUDA - skipping candidate comparison."
         )
-        return
-    
-    CTCBeamSearchDecoder = candidate_module.CTCBeamSearchDecoder
-    
-    log_probs_candidate = log_probs_btv.to(candidate_device)
-    input_lengths_candidate = input_lengths.to(device=candidate_device, dtype=torch.int32)
-    
-    B, T, V = log_probs_btv.shape
-    
-    try:
-        candidate_decoder = CTCBeamSearchDecoder(
-            beam_width=args.beam_width,
-            num_classes=V,  # use real vocab size
-            max_output_length=T,
-            blank_id=blank_idx,
-            batch_size=B,
-            max_time=T,
-        )
-        
-        (sequences, lengths, scores), candidate_timing = run_timed(
-            "candidate",
-            args.timing_runs,
-            candidate_decoder.decode,
-            args=(log_probs_candidate, input_lengths_candidate),
-            sync_fn=torch.cuda.synchronize,
-        )
-        
-        timing_stats_list.append(candidate_timing)
-        
-        sorted_indices = scores.argsort(dim=1, descending=True)
-        top_k_indices = sorted_indices[:, :args.top_k]
-        top_lengths = lengths.gather(1, top_k_indices)
-        
-        B, _, L = sequences.shape
-        top_k_indices_expanded = top_k_indices.unsqueeze(2).expand(-1, -1, L)
-        candidate_hypotheses = sequences.gather(1, top_k_indices_expanded)
-        
-    except NotImplementedError:
-        print("candidate raised NotImplementedError, skip")
-        return
-    
-    candidate_hypotheses = candidate_hypotheses.to("cpu")
-    candidate_lengths = top_lengths.to("cpu")
-    
-    candidate_decoded_texts = format_cand_fn(
-        candidate_hypotheses, candidate_lengths, tokens, blank_idx, args.top_k
-    )
     
     avg_distance = compute_avg_edit_distance(ref_decoded_texts, candidate_decoded_texts)
     if avg_distance is not None:

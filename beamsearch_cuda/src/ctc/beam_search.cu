@@ -4,6 +4,8 @@
 #include "kernels/expand.cuh"
 #include "kernels/top_k.cuh"
 #include "kernels/reconstruct.cuh"
+#include "../scheduler/scheduler.h"
+#include "../scheduler/mlp/mlp_decay_scheduler.h"
 
 #include <cuda_runtime.h>
 #include <thrust/device_ptr.h>
