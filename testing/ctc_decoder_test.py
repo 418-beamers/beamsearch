@@ -79,8 +79,7 @@ def ensure_scheduler_binaries(scheduler_type: str, lut_path: str, mlp_path: str)
                 shutil.copy(SOURCE_MLP_WEIGHTS, resolved_mlp)
             else:
                 raise FileNotFoundError(
-                    f"mlp weights not found at {resolved_mlp} and 
-                    source {SOURCE_MLP_WEIGHTS} doesn't exist, please generate"
+                    f"mlp weights not found at {resolved_mlp} and source {SOURCE_MLP_WEIGHTS} doesn't exist, please generate"
                 )
     
     return resolved_lut, resolved_mlp
