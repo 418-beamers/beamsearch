@@ -305,14 +305,15 @@ def _run_candidate_decoder(
     log_probs_candidate = log_probs_btv.to(candidate_device)
     input_lengths_candidate = input_lengths.to(device=candidate_device, dtype=torch.int32)
 
-    schedule = BeamSchedule()
-    schedule.adaptive_beam_width = args.adaptive_beam_width
-    schedule.a = args.schedule_a
-    schedule.b = args.schedule_b
-    schedule.c = args.schedule_c
-    schedule.min = args.schedule_min
-    schedule.init = args.schedule_init
-    schedule.init_steps = args.schedule_init_steps
+    schedule = BeamSchedule(
+        adaptive_beam_width=args.adaptive_beam_width,
+        a=args.schedule_a,
+        b=args.schedule_b,
+        c=args.schedule_c,
+        min=args.schedule_min,
+        init=args.schedule_init,
+        init_steps=args.schedule_init_steps,
+    )
 
     try:
         candidate_decoder = CTCBeamSearchDecoder(
