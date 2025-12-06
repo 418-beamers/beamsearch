@@ -103,6 +103,7 @@ The `testing/ctc_decoder_test.py` script accepts several arguments to control th
 - `--schedule-init-steps`: Number of timesteps to hold initial width before decay
 - `--lut-path`: Path to LUT scheduler binary (default: `testing/bin/scheduler_lut.bin`, auto-generated if missing)
 - `--mlp-path`: Path to MLP scheduler weights (default: `testing/bin/mlp_weights.bin`, auto-copied if missing)
+- `-d`: Debug printing flag, prints beam width at each decoding step
 
 **Other:**
 - `--verbose`: Print decoded sequences and similarity metrics
