@@ -23,6 +23,9 @@ from rich.console import Console
 from rich.table import Table as RichTable
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+TESTING_DIR = Path(__file__).resolve().parent
+BIN_DIR = TESTING_DIR / "bin"
+
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -45,6 +48,57 @@ from utils import (
     format_candidate_outputs_wav2vec2,
 )
 
+DEFAULT_LUT_FILENAME = "scheduler_lut.bin"
+DEFAULT_MLP_FILENAME = "mlp_weights.bin"
+
+SOURCE_MLP_WEIGHTS = PROJECT_ROOT / "beamsearch_cuda" / "src" / "scheduler" / "mlp" / "mlp_weights.bin"
+
+def ensure_scheduler_binaries(scheduler_type: str, lut_path: str, mlp_path: str) -> tuple:
+    import shutil
+    
+    BIN_DIR.mkdir(parents=True, exist_ok=True)
+    
+    resolved_lut = lut_path
+    resolved_mlp = mlp_path
+    
+    if scheduler_type == "lut":
+        if not lut_path:
+            resolved_lut = str(BIN_DIR / DEFAULT_LUT_FILENAME)
+        
+        if not Path(resolved_lut).exists():
+            print(f"lut binary not found at {resolved_lut}, generating...")
+            _generate_lut_binary(resolved_lut)
+            
+    elif scheduler_type == "mlp":
+        if not mlp_path:
+            resolved_mlp = str(BIN_DIR / DEFAULT_MLP_FILENAME)
+        
+        if not Path(resolved_mlp).exists():
+            if SOURCE_MLP_WEIGHTS.exists():
+                print(f"mlp weights not found at {resolved_mlp}, copying from {SOURCE_MLP_WEIGHTS}...")
+                shutil.copy(SOURCE_MLP_WEIGHTS, resolved_mlp)
+            else:
+                raise FileNotFoundError(
+                    f"mlp weights not found at {resolved_mlp} and 
+                    source {SOURCE_MLP_WEIGHTS} doesn't exist, please generate"
+                )
+    
+    return resolved_lut, resolved_mlp
+
+def _generate_lut_binary(output_path: str):
+    candidate_module = load_candidate_module()
+    
+    if candidate_module is None or not hasattr(candidate_module, 'generate_lut'):
+        raise RuntimeError(
+            "cannot generate lut: beamsearch_cuda extension not available or missing generate_lut"
+        )
+
+    candidate_module.generate_lut(
+        output_path,
+        time_resolution=100,
+        entropy_bins=50,
+        max_entropy=10.0
+    )
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -110,8 +164,8 @@ def parse_args():
     parser.add_argument("--schedule-min", type=int, default=0, help="schedule min beam width")
     parser.add_argument("--schedule-init", type=int, default=0, help="schedule initial beam width")
     parser.add_argument("--schedule-init-steps", type=int, default=0, help="steps before decay starts")
-    parser.add_argument("--lut-path", type=str, default="", help="path to LUT scheduler binary")
-    parser.add_argument("--mlp-path", type=str, default="", help="path to MLP scheduler weights")
+    parser.add_argument("--lut-path", type=str, default="", help="path to LUT binary (default: testing/bin/scheduler_lut.bin)")
+    parser.add_argument("--mlp-path", type=str, default="", help="path to MLP weights (default: testing/bin/mlp_weights.bin)")
 
     args = parser.parse_args()
     
@@ -132,12 +186,14 @@ def parse_args():
                     "--scheduler-type naive requires at least one of "
                     "--schedule-a, --schedule-b, --schedule-c to be non-zero"
                 )
-        elif args.scheduler_type == "lut":
-            if not args.lut_path:
-                parser.error("--scheduler-type lut requires --lut-path")
-        elif args.scheduler_type == "mlp":
-            if not args.mlp_path:
-                parser.error("--scheduler-type mlp requires --mlp-path")
+        
+        if args.scheduler_type in ("lut", "mlp"):
+            try:
+                args.lut_path, args.mlp_path = ensure_scheduler_binaries(
+                    args.scheduler_type, args.lut_path, args.mlp_path
+                )
+            except FileNotFoundError as e:
+                parser.error(str(e))
     else:
         scheduler_args_set = (
             args.scheduler_type != "naive" or

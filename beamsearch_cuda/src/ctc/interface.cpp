@@ -1,7 +1,9 @@
 #include <torch/extension.h>
 #include "beam_search.cuh"
+#include "../scheduler/scheduler.h"
 #include <cuda_runtime.h>
 #include <vector>
+#include <string>
 
 template<typename T>
 T* get_device_ptr(torch::Tensor tensor) {
@@ -88,6 +90,13 @@ void free_state(uintptr_t state_ptr) {
     delete decoder;
 }
 
+bool generate_lut(const std::string& output_path, int time_resolution, int entropy_bins, float max_entropy) {
+    DecayScheduleGenerator lut(time_resolution, entropy_bins, max_entropy);
+    lut.generateSyntheticData();
+    lut.saveToBinary(output_path);
+    return true;
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     pybind11::enum_<SchedulerType>(m, "SchedulerType")
         .value("NAIVE", SchedulerType::NAIVE)
@@ -111,5 +120,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("create", &create, "Create state");
     m.def("decode", &decode, "Decode sequences");
     m.def("free_state", &free_state, "Free state");
+    m.def("generate_lut", &generate_lut, "Generate LUT binary file",
+          pybind11::arg("output_path"),
+          pybind11::arg("time_resolution") = 100,
+          pybind11::arg("entropy_bins") = 50,
+          pybind11::arg("max_entropy") = 10.0f);
 }
 

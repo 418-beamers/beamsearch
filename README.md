@@ -101,8 +101,8 @@ The `testing/ctc_decoder_test.py` script accepts several arguments to control th
 - `--schedule-min`: Minimum beam width
 - `--schedule-init`: Initial beam width before decay
 - `--schedule-init-steps`: Number of timesteps to hold initial width before decay
-- `--lut-path`: Path to LUT scheduler binary file (required when `--scheduler-type lut`)
-- `--mlp-path`: Path to MLP scheduler weights file (required when `--scheduler-type mlp`)
+- `--lut-path`: Path to LUT scheduler binary (default: `testing/bin/scheduler_lut.bin`, auto-generated if missing)
+- `--mlp-path`: Path to MLP scheduler weights (default: `testing/bin/mlp_weights.bin`, auto-copied if missing)
 
 **Other:**
 - `--verbose`: Print decoded sequences and similarity metrics
@@ -146,18 +146,18 @@ python testing/ctc_decoder_test.py --real --candidate-device cuda \
     --schedule-init 50 --schedule-min 10 --schedule-init-steps 5
 ```
 
-Run with LUT scheduler:
+Run with LUT scheduler (auto-generates `testing/bin/scheduler_lut.bin` if missing):
 ```bash
 python testing/ctc_decoder_test.py --real --candidate-device cuda \
     --adaptive-beam-width --scheduler-type lut \
-    --lut-path path/to/scheduler.bin
+    --schedule-init 50 --schedule-min 10
 ```
 
-Run with MLP scheduler:
+Run with MLP scheduler (auto-copies weights to `testing/bin/mlp_weights.bin` if missing):
 ```bash
 python testing/ctc_decoder_test.py --real --candidate-device cuda \
     --adaptive-beam-width --scheduler-type mlp \
-    --mlp-path path/to/mlp_weights.bin
+    --schedule-init 50 --schedule-min 10
 ```
 
 ## Test Module Structure
