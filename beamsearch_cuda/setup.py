@@ -13,8 +13,10 @@ setup(
                 'src/ctc/kernels/expand.cu',
                 'src/ctc/kernels/top_k.cu',
                 'src/ctc/kernels/reconstruct.cu',
+                'src/scheduler/scheduler.cpp',
+                'src/scheduler/mlp/mlp_decay_scheduler.cpp',
             ],
-            include_dirs=['src/ctc'],
+            include_dirs=['src/ctc', 'src/scheduler', 'src/scheduler/mlp'],
             extra_compile_args={
                 'cxx': ['-O3'],
                 'nvcc': [

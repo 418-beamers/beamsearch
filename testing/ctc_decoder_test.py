@@ -103,12 +103,15 @@ def parse_args():
     )
     
     parser.add_argument("--adaptive-beam-width", action="store_true", help="enable adaptive beam width")
-    parser.add_argument("--schedule-a", type=float, default=0.0, help="schedule param a")
-    parser.add_argument("--schedule-b", type=float, default=0.0, help="schedule param b")
-    parser.add_argument("--schedule-c", type=float, default=0.0, help="schedule param c")
+    parser.add_argument("--scheduler-type", type=str, default="naive", choices=["naive", "lut", "mlp"], help="scheduler type")
+    parser.add_argument("--schedule-a", type=float, default=0.0, help="schedule param a (NAIVE mode)")
+    parser.add_argument("--schedule-b", type=float, default=0.0, help="schedule param b (NAIVE mode)")
+    parser.add_argument("--schedule-c", type=float, default=0.0, help="schedule param c (NAIVE mode)")
     parser.add_argument("--schedule-min", type=int, default=0, help="schedule min beam width")
     parser.add_argument("--schedule-init", type=int, default=0, help="schedule initial beam width")
     parser.add_argument("--schedule-init-steps", type=int, default=0, help="steps before decay starts")
+    parser.add_argument("--lut-path", type=str, default="", help="path to LUT scheduler binary")
+    parser.add_argument("--mlp-path", type=str, default="", help="path to MLP scheduler weights")
 
     return parser.parse_args()
 
@@ -305,14 +308,20 @@ def _run_candidate_decoder(
     log_probs_candidate = log_probs_btv.to(candidate_device)
     input_lengths_candidate = input_lengths.to(device=candidate_device, dtype=torch.int32)
 
+    SchedulerType = candidate_module.SchedulerType
+    scheduler_type_map = {"naive": SchedulerType.NAIVE, "lut": SchedulerType.LUT, "mlp": SchedulerType.MLP}
+    
     schedule = BeamSchedule(
         adaptive_beam_width=args.adaptive_beam_width,
+        scheduler_type=scheduler_type_map[args.scheduler_type],
         a=args.schedule_a,
         b=args.schedule_b,
         c=args.schedule_c,
         min=args.schedule_min,
         init=args.schedule_init,
         init_steps=args.schedule_init_steps,
+        lut_path=args.lut_path,
+        mlp_path=args.mlp_path,
     )
 
     try:
