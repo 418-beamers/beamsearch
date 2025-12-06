@@ -308,6 +308,9 @@ def _run_candidate_decoder(
     log_probs_candidate = log_probs_btv.to(candidate_device)
     input_lengths_candidate = input_lengths.to(device=candidate_device, dtype=torch.int32)
 
+    # Get actual dimensions from the input tensor
+    B, T, V = log_probs_btv.shape
+
     SchedulerType = candidate_module.SchedulerType
     scheduler_type_map = {"naive": SchedulerType.NAIVE, "lut": SchedulerType.LUT, "mlp": SchedulerType.MLP}
     
@@ -327,11 +330,11 @@ def _run_candidate_decoder(
     try:
         candidate_decoder = CTCBeamSearchDecoder(
             beam_width=args.beam_width,
-            num_classes=args.vocab_size,
-            max_output_length=args.time_steps,
+            num_classes=V,
+            max_output_length=T,
             blank_id=blank_idx,
-            batch_size=args.batch_size,
-            max_time=args.time_steps,
+            batch_size=B,
+            max_time=T,
             schedule=schedule,
         )
 
