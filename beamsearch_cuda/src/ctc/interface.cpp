@@ -89,15 +89,24 @@ void free_state(uintptr_t state_ptr) {
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    pybind11::enum_<SchedulerType>(m, "SchedulerType")
+        .value("NAIVE", SchedulerType::NAIVE)
+        .value("LUT", SchedulerType::LUT)
+        .value("MLP", SchedulerType::MLP)
+        .export_values();
+
     pybind11::class_<BeamSchedule>(m, "BeamSchedule")
-        .def(pybind11::init<bool, float, float, float, int, int, int>())
+        .def(pybind11::init<>())
         .def_readwrite("adaptive_beam_width", &BeamSchedule::adaptive_beam_width)
+        .def_readwrite("scheduler_type", &BeamSchedule::scheduler_type)
         .def_readwrite("a", &BeamSchedule::a)
         .def_readwrite("b", &BeamSchedule::b)
         .def_readwrite("c", &BeamSchedule::c)
         .def_readwrite("min", &BeamSchedule::min)
         .def_readwrite("init", &BeamSchedule::init)
-        .def_readwrite("init_steps", &BeamSchedule::init_steps);
+        .def_readwrite("init_steps", &BeamSchedule::init_steps)
+        .def_readwrite("lut_path", &BeamSchedule::lut_path)
+        .def_readwrite("mlp_path", &BeamSchedule::mlp_path);
 
     m.def("create", &create, "Create state");
     m.def("decode", &decode, "Decode sequences");

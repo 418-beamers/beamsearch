@@ -15,6 +15,7 @@ __global__ void reconstruct(
     int len = 0;
     int* myOutput = state.output.sequences + (batchIdx * config.beam_width + beamIdx) * config.max_output_length;
     
+    // reconstructing sequence from history tokens and parents
     for (int t = config.max_time - 1; t >= 0; t--) {
         int histIdx = t * config.batch_size * config.beam_width + batchIdx * config.beam_width + currentBeam;
         int token = state.beam.history_tokens[histIdx];

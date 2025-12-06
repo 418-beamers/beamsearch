@@ -2,15 +2,34 @@
 #define BEAM_SEARCH_CUH
 
 #include <cuda_runtime.h>
+#include <string>
+#include <memory>
+#include <vector>
+
+class DecayScheduleGenerator;
+class MLPDecayScheduler;
+
+enum class SchedulerType {
+    NAIVE,
+    LUT,
+    MLP
+};
 
 struct BeamSchedule {
     bool adaptive_beam_width;
+    SchedulerType scheduler_type;
+
+    // used with NAIVE
     float a;
     float b;
     float c;
     int min;
     int init;
     int init_steps;
+
+    // file path for LUT
+    std::string lut_path;
+    std::string mlp_path;
 };
 
 struct CTCBeamSearchConfig {
@@ -27,9 +46,9 @@ struct CTCBeamSearchConfig {
 };
 
 struct BeamState {
-    float* prob_blank;       
-    float* prob_non_blank;    
-    float* prob_total;       
+    float* score_blank;       
+    float* score_non_blank;    
+    float* score_total;       
     unsigned int* prefix_hashes; 
     int* current_lengths;    
     int* last_tokens;        
@@ -39,8 +58,8 @@ struct BeamState {
 
 struct CandidateState {
     unsigned int* keys;   
-    float* prob_blank;
-    float* prob_non_blank;
+    float* score_blank;
+    float* score_non_blank;
     int* parent_idx;     
     int* token;         
     int* last_token;     
@@ -50,9 +69,9 @@ struct CandidateState {
 
 struct UniqueState {
     unsigned int* keys;
-    float* prob_blank;
-    float* prob_non_blank;
-    float* prob_total;
+    float* score_blank;
+    float* score_non_blank;
+    float* score_total;
     int* parent_idx;
     int* token;
     int* last_token;
@@ -87,11 +106,17 @@ private:
     CTCBeamSearchConfig config_;
     CTCBeamSearchState state_;
 
+    std::unique_ptr<DecayScheduleGenerator> lut_scheduler_;
+    std::unique_ptr<MLPDecayScheduler> mlp_scheduler_;
+    std::vector<float> entropy_history_;
+
     void initialize(cudaStream_t stream);
     void launch(const float* log_probs, const int* input_lengths, cudaStream_t stream);
     void reconstruct(cudaStream_t stream);
     cudaError_t allocate_state();
     void free_state();
+
+    int compute_beam_width(int t, float current_entropy);
 };
 
 #endif 

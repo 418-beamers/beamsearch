@@ -1,0 +1,75 @@
+#include "mlp_decay_scheduler.h"
+#include <cmath>
+#include <fstream>
+#include <iostream>
+
+MLPDecayScheduler::MLPDecayScheduler() : input_size(0), hidden_size(0), output_size(0) {}
+
+inline float MLPDecayScheduler::sigmoid(float x) const {
+  return 1.0f / (1.0f + std::exp(-x));
+}
+
+bool MLPDecayScheduler::loadFromFile(const std::string& filename) {
+  std::ifstream infile(filename, std::ios::binary);
+  if (!infile.is_open()) {
+    std::cerr << "Error: could not open " << filename << std::endl;
+    return false;
+  }
+
+  infile.read((char*)&input_size, sizeof(int));
+  infile.read((char*)&hidden_size, sizeof(int));
+  infile.read((char*)&output_size, sizeof(int));
+
+  W1.resize(hidden_size * input_size);
+  b1.resize(hidden_size);
+  W2.resize(output_size * hidden_size);
+  b2.resize(output_size);
+
+  infile.read((char*)W1.data(), W1.size() * sizeof(float));
+  infile.read((char*)b1.data(), b1.size() * sizeof(float));
+  infile.read((char*)W2.data(), W2.size() * sizeof(float));
+  infile.read((char*)b2.data(), b2.size() * sizeof(float));
+
+  infile.close();
+  std::cout << "MLP Loaded (" << input_size << "->" << hidden_size << "->" << output_size << ")\n";
+  return true;
+}
+
+Params MLPDecayScheduler::query(const std::vector<float>& history, float min_beam, float max_beam) const {
+  if ((int)history.size() != input_size) {
+    Params res = {0.0f, 0.0f, 0.0f};
+    return res;
+  }
+
+  std::vector<float> hidden(hidden_size);
+
+  for (int h = 0; h < hidden_size; ++h) {
+    float sum = b1[h];
+
+    for (int i = 0; i < input_size; ++i) {
+      sum += history[i] * W1[h * input_size + i];
+    }
+
+    hidden[h] = (sum > 0.0f) ? sum : 0.0f;
+  }
+
+  std::vector<float> output(output_size);
+
+  for (int o = 0; o < output_size; ++o) {
+    float sum = b2[o];
+
+    for (int h = 0; h < hidden_size; ++h) {
+      sum += hidden[h] * W2[o * hidden_size + h];
+    }
+
+    output[o] = sigmoid(sum);
+  }
+
+  float beam_range = max_beam - min_beam;
+  Params res;
+  res.A = beam_range * output[0];
+  res.B = -1.0f + (0.95f * output[1]);
+  res.C = min_beam + (beam_range * output[2]);
+
+  return res;
+}

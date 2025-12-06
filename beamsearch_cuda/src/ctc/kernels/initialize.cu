@@ -11,16 +11,16 @@ __global__ void initialize(
     int beamIdx = idx % config.beam_width;
 
     if (beamIdx == 0) {
-        state.beam.prob_blank[idx] = 0.0f; 
-        state.beam.prob_non_blank[idx] = NEG_INF;
-        state.beam.prob_total[idx] = 0.0f;
+        state.beam.score_blank[idx] = 0.0f; 
+        state.beam.score_non_blank[idx] = NEG_INF;
+        state.beam.score_total[idx] = 0.0f;
         state.beam.prefix_hashes[idx] = 0; 
         state.beam.current_lengths[idx] = 0;
         state.beam.last_tokens[idx] = -1; 
     } else {
-        state.beam.prob_blank[idx] = NEG_INF;
-        state.beam.prob_non_blank[idx] = NEG_INF;
-        state.beam.prob_total[idx] = NEG_INF;
+        state.beam.score_blank[idx] = NEG_INF;
+        state.beam.score_non_blank[idx] = NEG_INF;
+        state.beam.score_total[idx] = NEG_INF;
         state.beam.prefix_hashes[idx] = 0;
         state.beam.current_lengths[idx] = 0;
         state.beam.last_tokens[idx] = -1;

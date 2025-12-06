@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Tuple, NamedTuple
+from enum import IntEnum
 import math
 import torch
 from torch.utils.cpp_extension import load
@@ -7,14 +8,25 @@ from torch.utils.cpp_extension import load
 
 _MODULE = None
 
+# to mirror cpp interface
+class SchedulerType(IntEnum):
+    NAIVE = 0
+    LUT = 1
+    MLP = 2
+
+
 class BeamSchedule(NamedTuple):
     adaptive_beam_width: bool = False
+    scheduler_type: SchedulerType = SchedulerType.NAIVE
     a: float = 0.0
     b: float = 0.0
     c: float = 0.0
     min: int = 0
     init: int = 0
     init_steps: int = 0
+    lut_path: str = ""
+    mlp_path: str = ""
+
 
 def _load_ctc_extension():
     global _MODULE
@@ -22,6 +34,7 @@ def _load_ctc_extension():
     if _MODULE is None:
         base_dir = Path(__file__).resolve().parent
         src_dir = base_dir / "src" / "ctc"
+        scheduler_dir = base_dir / "src" / "scheduler"
 
         sources = [
             src_dir / "interface.cpp",
@@ -30,12 +43,14 @@ def _load_ctc_extension():
             src_dir / "kernels" / "expand.cu",
             src_dir / "kernels" / "top_k.cu",
             src_dir / "kernels" / "reconstruct.cu",
+            scheduler_dir / "scheduler.cpp",
+            scheduler_dir / "mlp" / "mlp_decay_scheduler.cpp",
         ]
 
         _MODULE = load(
             name="beamsearch_cuda_native",
             sources=[str(path) for path in sources],
-            extra_include_paths=[str(src_dir)],
+            extra_include_paths=[str(src_dir), str(scheduler_dir), str(scheduler_dir / "mlp")],
             verbose=False,
         )
 
@@ -98,15 +113,17 @@ class CTCBeamSearchDecoder:
         if hash_bits < 1:
              raise ValueError(f"Batch size {batch_size} is too large to fit in 32-bit key with any hash bits left.")
 
-        schedule_config = self._ext.BeamSchedule(
-            schedule.adaptive_beam_width,
-            schedule.a,
-            schedule.b,
-            schedule.c,
-            schedule.min,
-            schedule.init,
-            schedule.init_steps,
-        )
+        schedule_config = self._ext.BeamSchedule()
+        schedule_config.adaptive_beam_width = schedule.adaptive_beam_width
+        schedule_config.scheduler_type = self._ext.SchedulerType(int(schedule.scheduler_type))
+        schedule_config.a = schedule.a
+        schedule_config.b = schedule.b
+        schedule_config.c = schedule.c
+        schedule_config.min = schedule.min
+        schedule_config.init = schedule.init
+        schedule_config.init_steps = schedule.init_steps
+        schedule_config.lut_path = schedule.lut_path
+        schedule_config.mlp_path = schedule.mlp_path
 
         self.state_ptr = self._ext.create(
             batch_size,
@@ -231,4 +248,4 @@ def ctc_beam_search(
     
     return hypotheses, top_scores
 
-__all__ = ["CTCBeamSearchDecoder", "ctc_beam_search_decode", "ctc_beam_search", "BeamSchedule"]
+__all__ = ["CTCBeamSearchDecoder", "ctc_beam_search_decode", "ctc_beam_search", "BeamSchedule", "SchedulerType"]
