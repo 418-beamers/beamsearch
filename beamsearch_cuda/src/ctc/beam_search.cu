@@ -27,7 +27,7 @@ CTCBeamSearch::CTCBeamSearch(const CTCBeamSearchConfig& config) : config_(config
     }
 
     if (config_.schedule.adaptive_beam_width) {
-        switch (config_.schedule.schedule_type) {
+        switch (config_.schedule.scheduler_type) {
             case SchedulerType::LUT: {
                 lut_scheduler_ = std::make_unique<DecayScheduleGenerator>(0, 0, 0.0f);
                 if (config_.schedule.lut_path.empty() ||
@@ -117,14 +117,14 @@ int CTCBeamSearch::compute_beam_width(int t, float current_entropy) {
                     (float)config_.beam_width
                 );
                 float dt = (float)(t - config_.schedule.init_steps);
-                float w params.A * expf(params.B * dt) + params.C;
+                float w = params.A * expf(params.B * dt) + params.C;
                 beam_width = (int)w;
                 break;
             }
         case SchedulerType::NAIVE:
         default: {
             float dt = (float)(t - config_.schedule.init_steps);
-            float w = config_.schedule.a * expf(-config.schedule.b * dt) + config_.schedule.c;
+            float w = config_.schedule.a * expf(-config_.schedule.b * dt) + config_.schedule.c;
             beam_width = (int)w;
             break;
         }

@@ -2,6 +2,9 @@
 #define BEAM_SEARCH_CUH
 
 #include <cuda_runtime.h>
+#include <string>
+#include <memory>
+#include <vector>
 
 class DecayScheduleGenerator;
 class MLPDecayScheduler;
