@@ -14,10 +14,12 @@
 #include <thrust/execution_policy.h>
 #include <thrust/iterator/zip_iterator.h>
 #include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 #include <thrust/tuple.h>
 #include <thrust/unique.h>
 #include <thrust/sequence.h>
 #include <thrust/gather.h>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -141,8 +143,8 @@ int CTCBeamSearch::compute_beam_width(int t, float current_entropy) {
 void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cudaStream_t stream) {
     int current_beam_width;
     entropy_history_.clear();
+    entropy_history_.reserve(config_.max_time);
 
-    // if adaptive, start with config_.schedule.init, otherwise config_.beam_width
     if (config_.schedule.adaptive_beam_width) {
         current_beam_width = config_.schedule.init;
     } else {
@@ -150,15 +152,31 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
     }
     
     for (int t = 0; t < config_.max_time; ++t) {
+        float current_entropy = 0.0f;
+
+        // compute average entropy across all batches
+        if (config_.schedule.adaptive_beam_width) {
+            const float* timestep_log_probs = log_probs + (long long)t * config_.batch_size * config_.num_classes;
+            int num_elements = config_.batch_size * config_.num_classes;
+            
+            auto entropy_iter = thrust::make_transform_iterator(
+                thrust::device_ptr<const float>(timestep_log_probs),
+                CalcEntropyContribution()
+            );
+            
+            float total_entropy = thrust::reduce(
+                thrust::cuda::par.on(stream),
+                entropy_iter,
+                entropy_iter + num_elements,
+                0.0f,
+                thrust::plus<float>()
+            );
+            
+            current_entropy = total_entropy / (float)config_.batch_size;
+        }
         
-        // vvvvvvvv
-        // insert real entropy logic here
-        float placeholder_entropy = 0.0f;
-        entropy_history_.push_back(placeholder_entropy);
-
-        current_beam_width = compute_beam_width(t, placeholder_entropy);
-
-        // ^^^^^^^^^ 
+        entropy_history_.push_back(current_entropy);
+        current_beam_width = compute_beam_width(t, current_entropy); 
 
         int num_active_beams = config_.batch_size * current_beam_width;
         int num_active_candidates = num_active_beams * config_.num_classes;

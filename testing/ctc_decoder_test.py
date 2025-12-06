@@ -113,7 +113,42 @@ def parse_args():
     parser.add_argument("--lut-path", type=str, default="", help="path to LUT scheduler binary")
     parser.add_argument("--mlp-path", type=str, default="", help="path to MLP scheduler weights")
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    
+    # argument validation for adaptive beam width
+    if args.adaptive_beam_width:
+        if args.schedule_init <= 0:
+            parser.error("--adaptive-beam-width requires --schedule-init > 0")
+        if args.schedule_min <= 0:
+            parser.error("--adaptive-beam-width requires --schedule-min > 0")
+        if args.schedule_min > args.schedule_init:
+            parser.error("--schedule-min must be <= --schedule-init")
+        if args.schedule_init > args.beam_width:
+            parser.error("--schedule-init must be <= --beam-width")
+            
+        if args.scheduler_type == "naive":
+            if args.schedule_a == 0.0 and args.schedule_b == 0.0 and args.schedule_c == 0.0:
+                parser.error(
+                    "--scheduler-type naive requires at least one of "
+                    "--schedule-a, --schedule-b, --schedule-c to be non-zero"
+                )
+        elif args.scheduler_type == "lut":
+            if not args.lut_path:
+                parser.error("--scheduler-type lut requires --lut-path")
+        elif args.scheduler_type == "mlp":
+            if not args.mlp_path:
+                parser.error("--scheduler-type mlp requires --mlp-path")
+    else:
+        scheduler_args_set = (
+            args.scheduler_type != "naive" or
+            args.schedule_a != 0.0 or args.schedule_b != 0.0 or args.schedule_c != 0.0 or
+            args.schedule_min != 0 or args.schedule_init != 0 or args.schedule_init_steps != 0 or
+            args.lut_path or args.mlp_path
+        )
+        if scheduler_args_set:
+            print("WARNING: invalid arguments without --adaptive-beam-width enabled")
+    
+    return args
 
 
 def run_synthetic_mode(args, cpu, candidate_device):
@@ -308,7 +343,6 @@ def _run_candidate_decoder(
     log_probs_candidate = log_probs_btv.to(candidate_device)
     input_lengths_candidate = input_lengths.to(device=candidate_device, dtype=torch.int32)
 
-    # Get actual dimensions from the input tensor
     B, T, V = log_probs_btv.shape
 
     SchedulerType = candidate_module.SchedulerType
