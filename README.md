@@ -167,14 +167,16 @@ The testing harness is organized into modular components under `testing/utils/`:
 
 ```
 testing/
-├── ctc_decoder_test.py    # main test script
-├── env_test.py            # environment validation
-└── utils/
-    ├── __init__.py        # module exports
-    ├── timing.py          # benchmarking utilities (run_timed, print_timing_table)
-    ├── similarity.py      # distance metrics (levenshtein, edit distance)
-    ├── tokenization.py    # vocab handling (make_tokens, detokenize, formatting)
-    ├── loaders.py         # extension loading (load_candidate_module, load_hello_extension)
-    ├── inputs.py          # synthetic input generation
-    └── real_audio.py      # Wav2Vec2 audio processing for real ASR testing
+├── beamers_sample.wav      # custom sample audio for testing
+├── bin                     # directory for lut, mlp binaries
+├── ctc_decoder_test.py     # main test script
+├── env_test.py             # environment validation script
+└── utils
+    ├── __init__.py         # module expors
+    ├── inputs.py           # synthetic input generation
+    ├── loaders.py          # extension loading
+    ├── real_audio.py       # wav2vec audio processing for real ASR testing
+    ├── similarity.py       # distance metrics
+    ├── timing.py           # benchmarking utils
+    └── tokenization.py     # vocab handling
 ```
