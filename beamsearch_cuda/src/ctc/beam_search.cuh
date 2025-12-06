@@ -10,7 +10,7 @@ enum class SchedulerType {
     NAIVE,
     LUT,
     MLP
-}
+};
 
 struct BeamSchedule {
     bool adaptive_beam_width;

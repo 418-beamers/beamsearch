@@ -11,6 +11,7 @@ __global__ void top_k(
     int batchIdx = blockIdx.x;
     if (batchIdx >= config.batch_size) return;
 
+    // finding the start index for hypotheses in the current batch
     int left = 0;
     int right = num_unique;
     int batchStart = -1;
@@ -28,6 +29,7 @@ __global__ void top_k(
     }
     batchStart = left;
 
+    // checking the batch has > 0 candidates
     bool batchFound = false;
     if (batchStart < num_unique) {
         int actualIdx = state.unique.indices[batchStart];
@@ -43,10 +45,11 @@ __global__ void top_k(
         
         bool isValid = batchFound && (batchStart + k < num_unique) && (k < beam_width);
         if (isValid) {
-             int sortedIdx = batchStart + k;
-             int uniqueIdx = state.unique.indices[sortedIdx];
-             
-             if (static_cast<int>(state.unique.keys[uniqueIdx] >> config.hash_bits) == batchIdx) {
+            int sortedIdx = batchStart + k;
+            int uniqueIdx = state.unique.indices[sortedIdx];
+            
+            if (static_cast<int>(state.unique.keys[uniqueIdx] >> config.hash_bits) == batchIdx) {
+                // promoting top-k hypotheses to active beams @ t+1
                 state.beam.score_blank[globalBeamIdx] = state.unique.score_blank[uniqueIdx];
                 state.beam.score_non_blank[globalBeamIdx] = state.unique.score_non_blank[uniqueIdx];
                 state.beam.score_total[globalBeamIdx] = state.unique.score_total[uniqueIdx];
@@ -61,9 +64,9 @@ __global__ void top_k(
                 int histIdx = time_step * config.batch_size * config.beam_width + globalBeamIdx;
                 state.beam.history_parents[histIdx] = parent;
                 state.beam.history_tokens[histIdx] = token;
-             } else {
-                 isValid = false;
-             }
+            } else {
+                isValid = false;
+            }
         }
         
         if (!isValid) {

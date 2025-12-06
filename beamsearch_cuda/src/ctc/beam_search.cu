@@ -163,6 +163,7 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
 
         int threads = 256;
         int expBlocks = (num_active_candidates + threads - 1) / threads;
+
         ::expand<<<expBlocks, threads, 0, stream>>>(
             state_, config_,
             log_probs + (long long)t * config_.batch_size * config_.num_classes,
@@ -174,13 +175,15 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
         thrust::counting_iterator<int> iter(0);
         thrust::copy(thrust::cuda::par.on(stream), iter, iter + num_active_candidates, state_.cand.indices_sorted);
         
+        // sorting by key places duplicate hypotheses together (to be deduplicated) 
         thrust::sort_by_key(
             thrust::cuda::par.on(stream),
             thrust::device_ptr<unsigned int>(state_.cand.keys),
             thrust::device_ptr<unsigned int>(state_.cand.keys + num_active_candidates),
             thrust::device_ptr<int>(state_.cand.indices_sorted)
         );
-
+        
+        // here-207: pre-processing for reduce_by_key
         auto perm_pb = thrust::make_permutation_iterator(
             thrust::device_ptr<float>(state_.cand.score_blank),
             thrust::device_ptr<int>(state_.cand.indices_sorted)
@@ -203,6 +206,7 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
             thrust::device_ptr<int>(state_.unique.indices)
         ));
 
+        // merge duplicate hypotheses and summing their scores
         auto new_end = thrust::reduce_by_key(
             thrust::cuda::par.on(stream),
             thrust::device_ptr<unsigned int>(state_.cand.keys),
@@ -216,28 +220,30 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
         
         int num_unique = new_end.first - thrust::device_ptr<unsigned int>(state_.unique.keys);
 
+
+        // here-252: pre-processing for summing blank, non-blank scores 
         thrust::gather(
-             thrust::cuda::par.on(stream),
-             thrust::device_ptr<int>(state_.unique.indices),
-             thrust::device_ptr<int>(state_.unique.indices) + num_unique,
-             thrust::device_ptr<int>(state_.cand.token),
-             thrust::device_ptr<int>(state_.unique.token)
+            thrust::cuda::par.on(stream),
+            thrust::device_ptr<int>(state_.unique.indices),
+            thrust::device_ptr<int>(state_.unique.indices) + num_unique,
+            thrust::device_ptr<int>(state_.cand.token),
+            thrust::device_ptr<int>(state_.unique.token)
         );
 
         thrust::gather(
-             thrust::cuda::par.on(stream),
-             thrust::device_ptr<int>(state_.unique.indices),
-             thrust::device_ptr<int>(state_.unique.indices) + num_unique,
-             thrust::device_ptr<int>(state_.cand.last_token),
-             thrust::device_ptr<int>(state_.unique.last_token)
+            thrust::cuda::par.on(stream),
+            thrust::device_ptr<int>(state_.unique.indices),
+            thrust::device_ptr<int>(state_.unique.indices) + num_unique,
+            thrust::device_ptr<int>(state_.cand.last_token),
+            thrust::device_ptr<int>(state_.unique.last_token)
         );
         
         thrust::gather(
-             thrust::cuda::par.on(stream),
-             thrust::device_ptr<int>(state_.unique.indices),
-             thrust::device_ptr<int>(state_.unique.indices) + num_unique,
-             thrust::device_ptr<int>(state_.cand.parent_idx),
-             thrust::device_ptr<int>(state_.unique.parent_idx) 
+            thrust::cuda::par.on(stream),
+            thrust::device_ptr<int>(state_.unique.indices),
+            thrust::device_ptr<int>(state_.unique.indices) + num_unique,
+            thrust::device_ptr<int>(state_.cand.parent_idx),
+            thrust::device_ptr<int>(state_.unique.parent_idx) 
         );
 
         auto unique_score_zip = thrust::make_zip_iterator(thrust::make_tuple(
@@ -245,6 +251,7 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
             thrust::device_ptr<float>(state_.unique.score_non_blank)
         ));
 
+        // summing blank, non-blank scores to get total scores
         thrust::transform(
             thrust::cuda::par.on(stream),
             unique_score_zip,
@@ -258,7 +265,8 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
             thrust::device_ptr<int>(state_.unique.indices),
             thrust::device_ptr<int>(state_.unique.indices) + num_unique
         );
-
+        
+        // sorting unique hypotheses within batch by total scores
         thrust::sort(
             thrust::cuda::par.on(stream),
             thrust::device_ptr<int>(state_.unique.indices),
