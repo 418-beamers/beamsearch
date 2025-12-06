@@ -23,6 +23,9 @@ from rich.console import Console
 from rich.table import Table as RichTable
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+TESTING_DIR = Path(__file__).resolve().parent
+BIN_DIR = TESTING_DIR / "bin"
+
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -45,6 +48,56 @@ from utils import (
     format_candidate_outputs_wav2vec2,
 )
 
+DEFAULT_LUT_FILENAME = "scheduler_lut.bin"
+DEFAULT_MLP_FILENAME = "mlp_weights.bin"
+
+SOURCE_MLP_WEIGHTS = PROJECT_ROOT / "beamsearch_cuda" / "src" / "scheduler" / "mlp" / "mlp_weights.bin"
+
+def ensure_scheduler_binaries(scheduler_type: str, lut_path: str, mlp_path: str) -> tuple:
+    import shutil
+    
+    BIN_DIR.mkdir(parents=True, exist_ok=True)
+    
+    resolved_lut = lut_path
+    resolved_mlp = mlp_path
+    
+    if scheduler_type == "lut":
+        if not lut_path:
+            resolved_lut = str(BIN_DIR / DEFAULT_LUT_FILENAME)
+        
+        if not Path(resolved_lut).exists():
+            print(f"lut binary not found at {resolved_lut}, generating...")
+            _generate_lut_binary(resolved_lut)
+            
+    elif scheduler_type == "mlp":
+        if not mlp_path:
+            resolved_mlp = str(BIN_DIR / DEFAULT_MLP_FILENAME)
+        
+        if not Path(resolved_mlp).exists():
+            if SOURCE_MLP_WEIGHTS.exists():
+                print(f"mlp weights not found at {resolved_mlp}, copying from {SOURCE_MLP_WEIGHTS}...")
+                shutil.copy(SOURCE_MLP_WEIGHTS, resolved_mlp)
+            else:
+                raise FileNotFoundError(
+                    f"mlp weights not found at {resolved_mlp} and source {SOURCE_MLP_WEIGHTS} doesn't exist, please generate"
+                )
+    
+    return resolved_lut, resolved_mlp
+
+def _generate_lut_binary(output_path: str):
+    candidate_module = load_candidate_module()
+    
+    if candidate_module is None or not hasattr(candidate_module, 'generate_lut'):
+        raise RuntimeError(
+            "cannot generate lut: beamsearch_cuda extension not available or missing generate_lut"
+        )
+
+    candidate_module.generate_lut(
+        output_path,
+        time_resolution=100,
+        entropy_bins=50,
+        max_entropy=10.0
+    )
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -102,6 +155,12 @@ def parse_args():
         help="print decoded sequences",
     )
     
+    parser.add_argument(
+        "-d", "--debug",
+        action="store_true",
+        help="print beam width and entropy at each timestep (for debugging adaptive beam width)",
+    )
+    
     parser.add_argument("--adaptive-beam-width", action="store_true", help="enable adaptive beam width")
     parser.add_argument("--scheduler-type", type=str, default="naive", choices=["naive", "lut", "mlp"], help="scheduler type")
     parser.add_argument("--schedule-a", type=float, default=0.0, help="schedule param a (NAIVE mode)")
@@ -110,10 +169,47 @@ def parse_args():
     parser.add_argument("--schedule-min", type=int, default=0, help="schedule min beam width")
     parser.add_argument("--schedule-init", type=int, default=0, help="schedule initial beam width")
     parser.add_argument("--schedule-init-steps", type=int, default=0, help="steps before decay starts")
-    parser.add_argument("--lut-path", type=str, default="", help="path to LUT scheduler binary")
-    parser.add_argument("--mlp-path", type=str, default="", help="path to MLP scheduler weights")
+    parser.add_argument("--lut-path", type=str, default="", help="path to LUT binary (default: testing/bin/scheduler_lut.bin)")
+    parser.add_argument("--mlp-path", type=str, default="", help="path to MLP weights (default: testing/bin/mlp_weights.bin)")
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    
+    # argument validation for adaptive beam width
+    if args.adaptive_beam_width:
+        if args.schedule_init <= 0:
+            parser.error("--adaptive-beam-width requires --schedule-init > 0")
+        if args.schedule_min <= 0:
+            parser.error("--adaptive-beam-width requires --schedule-min > 0")
+        if args.schedule_min > args.schedule_init:
+            parser.error("--schedule-min must be <= --schedule-init")
+        if args.schedule_init > args.beam_width:
+            parser.error("--schedule-init must be <= --beam-width")
+            
+        if args.scheduler_type == "naive":
+            if args.schedule_a == 0.0 and args.schedule_b == 0.0 and args.schedule_c == 0.0:
+                parser.error(
+                    "--scheduler-type naive requires at least one of "
+                    "--schedule-a, --schedule-b, --schedule-c to be non-zero"
+                )
+        
+        if args.scheduler_type in ("lut", "mlp"):
+            try:
+                args.lut_path, args.mlp_path = ensure_scheduler_binaries(
+                    args.scheduler_type, args.lut_path, args.mlp_path
+                )
+            except FileNotFoundError as e:
+                parser.error(str(e))
+    else:
+        scheduler_args_set = (
+            args.scheduler_type != "naive" or
+            args.schedule_a != 0.0 or args.schedule_b != 0.0 or args.schedule_c != 0.0 or
+            args.schedule_min != 0 or args.schedule_init != 0 or args.schedule_init_steps != 0 or
+            args.lut_path or args.mlp_path
+        )
+        if scheduler_args_set:
+            print("WARNING: invalid arguments without --adaptive-beam-width enabled")
+    
+    return args
 
 
 def run_synthetic_mode(args, cpu, candidate_device):
@@ -308,7 +404,6 @@ def _run_candidate_decoder(
     log_probs_candidate = log_probs_btv.to(candidate_device)
     input_lengths_candidate = input_lengths.to(device=candidate_device, dtype=torch.int32)
 
-    # Get actual dimensions from the input tensor
     B, T, V = log_probs_btv.shape
 
     SchedulerType = candidate_module.SchedulerType
@@ -347,6 +442,18 @@ def _run_candidate_decoder(
         )
 
         timing_stats_list.append(candidate_timing)
+
+        if args.debug and args.adaptive_beam_width:
+            beam_widths = candidate_decoder.get_beam_width_history()
+            entropies = candidate_decoder.get_entropy_history()
+            print("=" * 80)
+            print("Adaptive Beam Width Debug Info:")
+            print("=" * 80)
+            print(f"{'t':>4} | {'beam_width':>10} | {'entropy':>10}")
+            print("-" * 30)
+            for t, (bw, ent) in enumerate(zip(beam_widths, entropies)):
+                print(f"{t:>4} | {bw:>10} | {ent:>10.4f}")
+            print("=" * 80)
 
         sorted_indices = scores.argsort(dim=1, descending=True)
         top_k_indices = sorted_indices[:, :args.top_k]

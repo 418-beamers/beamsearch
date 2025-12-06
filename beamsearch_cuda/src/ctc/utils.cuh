@@ -55,5 +55,15 @@ struct CalcTotalScore {
     }
 };
 
+// entropy contribution: -p * log(p) = -exp(log_p) * log_p
+struct CalcEntropyContribution {
+    __host__ __device__ 
+    float operator()(float log_p) const {
+        if (log_p < -30.0f) return 0.0f; // for numerical stability
+        float p = expf(log_p);
+        return -p * log_p;
+    }
+};
+
 #endif // UTILS_CUH
 

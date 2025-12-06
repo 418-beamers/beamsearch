@@ -173,6 +173,12 @@ class CTCBeamSearchDecoder:
             prepared_lengths,
         )
 
+    def get_beam_width_history(self) -> list:
+        return self._ext.get_beam_width_history(self.state_ptr)
+
+    def get_entropy_history(self) -> list:
+        return self._ext.get_entropy_history(self.state_ptr)
+
     def decode_greedy(
         self,
         log_probs: torch.Tensor,
@@ -248,4 +254,8 @@ def ctc_beam_search(
     
     return hypotheses, top_scores
 
-__all__ = ["CTCBeamSearchDecoder", "ctc_beam_search_decode", "ctc_beam_search", "BeamSchedule", "SchedulerType"]
+def generate_lut(output_path: str, time_resolution: int = 100, entropy_bins: int = 50, max_entropy: float = 10.0) -> bool:
+    module = _load_ctc_extension()
+    return module.generate_lut(output_path, time_resolution, entropy_bins, max_entropy)
+
+__all__ = ["CTCBeamSearchDecoder", "ctc_beam_search_decode", "ctc_beam_search", "BeamSchedule", "SchedulerType", "generate_lut"]

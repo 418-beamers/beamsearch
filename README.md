@@ -89,6 +89,21 @@ The `testing/ctc_decoder_test.py` script accepts several arguments to control th
 - `--real`: Use real audio with pre-trained Wav2Vec2 ASR model instead of synthetic data
 - `--audio-file`: Path to audio file for real mode (if not provided, downloads a sample)
 
+**Adaptive Beam Width Scheduling:**
+- `--adaptive-beam-width`: Enable adaptive beam width scheduling (beam width decays over time)
+- `--scheduler-type`: Scheduler type: `naive`, `lut`, or `mlp` (default: `naive`)
+  - `naive`: Uses exponential decay formula `w(t) = a * exp(-b * t) + c`
+  - `lut`: Uses pre-computed lookup table from binary file
+  - `mlp`: Uses trained MLP model to predict decay parameters
+- `--schedule-a`: Decay parameter A for naive scheduler (amplitude)
+- `--schedule-b`: Decay parameter B for naive scheduler (decay rate)
+- `--schedule-c`: Decay parameter C for naive scheduler (asymptote)
+- `--schedule-min`: Minimum beam width
+- `--schedule-init`: Initial beam width before decay
+- `--schedule-init-steps`: Number of timesteps to hold initial width before decay
+- `--lut-path`: Path to LUT scheduler binary (default: `testing/bin/scheduler_lut.bin`, auto-generated if missing)
+- `--mlp-path`: Path to MLP scheduler weights (default: `testing/bin/mlp_weights.bin`, auto-copied if missing)
+
 **Other:**
 - `--verbose`: Print decoded sequences and similarity metrics
 - `--hello`: Run hello-world CUDA extension for toolchain verification
@@ -120,6 +135,30 @@ python testing/ctc_decoder_test.py --real --audio-file ~/beamsearch/testing/beam
 ```
 
 Real audio mode uses the Wav2Vec2 ASR model from torchaudio to generate CTC log probabilities from actual speech.
+
+**Adaptive Beam Width Scheduling**
+
+Run with naive exponential decay (start at 50, decay to 10):
+```bash
+python testing/ctc_decoder_test.py --real --candidate-device cuda \
+    --adaptive-beam-width --scheduler-type naive \
+    --schedule-a 40 --schedule-b 0.1 --schedule-c 10 \
+    --schedule-init 50 --schedule-min 10 --schedule-init-steps 5
+```
+
+Run with LUT scheduler (auto-generates `testing/bin/scheduler_lut.bin` if missing):
+```bash
+python testing/ctc_decoder_test.py --real --candidate-device cuda \
+    --adaptive-beam-width --scheduler-type lut \
+    --schedule-init 50 --schedule-min 10
+```
+
+Run with MLP scheduler (auto-copies weights to `testing/bin/mlp_weights.bin` if missing):
+```bash
+python testing/ctc_decoder_test.py --real --candidate-device cuda \
+    --adaptive-beam-width --scheduler-type mlp \
+    --schedule-init 50 --schedule-min 10
+```
 
 ## Test Module Structure
 
