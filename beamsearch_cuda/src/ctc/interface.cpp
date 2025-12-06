@@ -90,6 +90,16 @@ void free_state(uintptr_t state_ptr) {
     delete decoder;
 }
 
+std::vector<int> get_beam_width_history(uintptr_t state_ptr) {
+    CTCBeamSearch* decoder = reinterpret_cast<CTCBeamSearch*>(state_ptr);
+    return decoder->get_beam_width_history();
+}
+
+std::vector<float> get_entropy_history(uintptr_t state_ptr) {
+    CTCBeamSearch* decoder = reinterpret_cast<CTCBeamSearch*>(state_ptr);
+    return decoder->get_entropy_history();
+}
+
 bool generate_lut(const std::string& output_path, int time_resolution, int entropy_bins, float max_entropy) {
     DecayScheduleGenerator lut(time_resolution, entropy_bins, max_entropy);
     lut.generateSyntheticData();
@@ -120,6 +130,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("create", &create, "Create state");
     m.def("decode", &decode, "Decode sequences");
     m.def("free_state", &free_state, "Free state");
+    m.def("get_beam_width_history", &get_beam_width_history, "Get beam width history");
+    m.def("get_entropy_history", &get_entropy_history, "Get entropy history");
     m.def("generate_lut", &generate_lut, "Generate LUT binary file",
           pybind11::arg("output_path"),
           pybind11::arg("time_resolution") = 100,

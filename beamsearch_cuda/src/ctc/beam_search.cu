@@ -143,7 +143,9 @@ int CTCBeamSearch::compute_beam_width(int t, float current_entropy) {
 void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cudaStream_t stream) {
     int current_beam_width;
     entropy_history_.clear();
+    beam_width_history_.clear();
     entropy_history_.reserve(config_.max_time);
+    beam_width_history_.reserve(config_.max_time);
 
     if (config_.schedule.adaptive_beam_width) {
         current_beam_width = config_.schedule.init;
@@ -176,7 +178,8 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
         }
         
         entropy_history_.push_back(current_entropy);
-        current_beam_width = compute_beam_width(t, current_entropy); 
+        current_beam_width = compute_beam_width(t, current_entropy);
+        beam_width_history_.push_back(current_beam_width); 
 
         int num_active_beams = config_.batch_size * current_beam_width;
         int num_active_candidates = num_active_beams * config_.num_classes;

@@ -101,6 +101,9 @@ public:
     int* get_sequences() const;
     int* get_lengths() const;
     float* get_scores() const;
+    
+    const std::vector<int>& get_beam_width_history() const { return beam_width_history_; }
+    const std::vector<float>& get_entropy_history() const { return entropy_history_; }
 
 private:
     CTCBeamSearchConfig config_;
@@ -109,6 +112,7 @@ private:
     std::unique_ptr<DecayScheduleGenerator> lut_scheduler_;
     std::unique_ptr<MLPDecayScheduler> mlp_scheduler_;
     std::vector<float> entropy_history_;
+    std::vector<int> beam_width_history_;
 
     void initialize(cudaStream_t stream);
     void launch(const float* log_probs, const int* input_lengths, cudaStream_t stream);

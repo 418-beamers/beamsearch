@@ -155,6 +155,12 @@ def parse_args():
         help="print decoded sequences",
     )
     
+    parser.add_argument(
+        "-d", "--debug",
+        action="store_true",
+        help="print beam width and entropy at each timestep (for debugging adaptive beam width)",
+    )
+    
     parser.add_argument("--adaptive-beam-width", action="store_true", help="enable adaptive beam width")
     parser.add_argument("--scheduler-type", type=str, default="naive", choices=["naive", "lut", "mlp"], help="scheduler type")
     parser.add_argument("--schedule-a", type=float, default=0.0, help="schedule param a (NAIVE mode)")
@@ -436,6 +442,18 @@ def _run_candidate_decoder(
         )
 
         timing_stats_list.append(candidate_timing)
+
+        if args.debug and args.adaptive_beam_width:
+            beam_widths = candidate_decoder.get_beam_width_history()
+            entropies = candidate_decoder.get_entropy_history()
+            print("=" * 80)
+            print("Adaptive Beam Width Debug Info:")
+            print("=" * 80)
+            print(f"{'t':>4} | {'beam_width':>10} | {'entropy':>10}")
+            print("-" * 30)
+            for t, (bw, ent) in enumerate(zip(beam_widths, entropies)):
+                print(f"{t:>4} | {bw:>10} | {ent:>10.4f}")
+            print("=" * 80)
 
         sorted_indices = scores.argsort(dim=1, descending=True)
         top_k_indices = sorted_indices[:, :args.top_k]

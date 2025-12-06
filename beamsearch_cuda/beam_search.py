@@ -173,6 +173,12 @@ class CTCBeamSearchDecoder:
             prepared_lengths,
         )
 
+    def get_beam_width_history(self) -> list:
+        return self._ext.get_beam_width_history(self.state_ptr)
+
+    def get_entropy_history(self) -> list:
+        return self._ext.get_entropy_history(self.state_ptr)
+
     def decode_greedy(
         self,
         log_probs: torch.Tensor,
