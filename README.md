@@ -1,30 +1,55 @@
-# Interface
-Let: 
-- B: batch_size, 
-- T: time_steps, 
-- V: vocab_size,
+# CTC Beam Search CUDA Decoder
 
-*ctc_beam_search*
-- args:
-    - log_probs: tensor, (B, T, V)
-    - input_lengths: tensor, (B,)
-    - beam_width: int 
-    - blank_idx: int
-    - top_k: int
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![CUDA 12.4](https://img.shields.io/badge/cuda-12.4-76B900) ![PyTorch CUDA Extension](https://img.shields.io/badge/pytorch-CUDA%20extension-EE4C2C) ![CTC Beam Search](https://img.shields.io/badge/decoder-CTC%20beamsearch-orange)
 
-- returns:
-    - hypotheses: tensor, (B, top_k, max_decoded_length)
-    - scores: tensor, (B, top_k)
+A CUDA-accelerated CTC beam search decoder with a PyTorch extension and benchmarking harness for ASR experiments.
 
-## A note on standard CTC Beam search decoding vs. Auto-regressive beam search decoding
-This projects primary focus is on standard CTC Beam search decoding, as it is significantly more amenable to parallelization with CUDA. In this approach, the neural network outputs the complete distribution for all tokens over all timesteps in a forward pass, B x T x V, as described above. The algorithm operates on these pre-computed log-probabilities to perform top-K selection. With this approach, a subsequently generated token does not depend on a previously generated one, simplifying the problem mathematically and offering more axes to explore parallelization over. 
+## Interface
 
-By contrast, auto-regressive Beam search has a dependency between previously and subsequently generated tokens, creating a sequential dependency which requires repeated queries of the neural network's forward pass. 
+### Function Signature
 
-In practice, CTC Beam search decoding is preferred for ASR (automatic speech recognition), especially in streaming/real-time applications, whereas auto-regressive Beam search is preferred for language models where the token dependencies matter more.
+```python
+ctc_beam_search(
+    log_probs: Tensor,      # (B, T, V) - log probabilities
+    input_lengths: Tensor,  # (B,) - sequence lengths
+    beam_width: int,        # beam search width
+    blank_idx: int,         # CTC blank token index
+    top_k: int              # number of hypotheses to return
+) -> Tuple[Tensor, Tensor]
+```
 
-# Setup
-Run the following commands to create a conda env ready to run the test harness
+**Returns:**
+- `hypotheses`: Tensor of shape `(B, top_k, max_decoded_length)` - top-k decoded sequences
+- `scores`: Tensor of shape `(B, top_k)` - log probabilities for each hypothesis
+
+**Notation:**
+- `B` = batch size
+- `T` = time steps
+- `V` = vocabulary size
+
+## CTC vs. Autoregressive Beam Search
+
+This project focuses on **CTC beam search decoding**, which is more amenable to CUDA parallelization than autoregressive approaches.
+
+**CTC Beam Search:**
+- Neural network outputs complete token distributions for all timesteps in one forward pass: `(B, T, V)`
+- No dependency between subsequently generated tokens
+- Operates on pre-computed log-probabilities
+- Multiple axes for parallelization (batch, time, beam)
+
+**Autoregressive Beam Search:**
+- Sequential dependency: each token depends on previously generated tokens
+- Requires repeated queries to the neural network's forward pass
+- Limited parallelization opportunities
+
+**Practical Use:**
+- **CTC**: Preferred for ASR (automatic speech recognition), especially streaming/real-time applications
+- **Autoregressive**: Preferred for language models where token dependencies are critical
+
+## Setup
+
+### Conda environment
+Run the following commands to create a conda env ready to run the test harness:
 ```bash
 conda create -n beams python=3.10 -y
 conda activate beams
@@ -33,7 +58,8 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 python -m pip install flashlight-text rich soundfile pyctcdecode
 ```
 
-Might also have to run these to add CUDA toolkit to path: 
+### CUDA toolkit (optional)
+You might also have to run these to add CUDA toolkit to your `PATH`:
 ```
 export CUDA_HOME=/usr/local/cuda-12.4
 export PATH=$CUDA_HOME/bin:$PATH
@@ -41,16 +67,18 @@ export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 export TORCH_CUDA_ARCH_LIST="7.5"
 ```
 
-can run `python testing/env_test.py` to validate that the basic libraries necessary for the project are present
+You can run `python testing/env_test.py` to validate that the basic libraries necessary for the project are present.
 
-# Quickstart
+## Quickstart
 
-## Building CUDA Extension 
+### Build CUDA extension 
 
 Install the extension by running:
 ```bash
 pip install -e beamsearch_cuda/ --no-build-isolation
 ```
+
+### Run tests and benchmarks
 
 Verify CUDA toolchain with hello-world extension:
 ```bash
@@ -72,7 +100,7 @@ Run LibriSpeech benchmark:
 python testing/ctc_decoder_test.py --benchmark
 ```
 
-# Testing Module
+## Testing Module
 
 The `testing/ctc_decoder_test.py` script accepts several arguments to control the test parameters:
 
