@@ -50,6 +50,7 @@ from utils import (
     compute_benchmark_metrics,
     print_benchmark_table,
     print_sweep_summary,
+    clear_decoder_cache,
 )
 
 console = Console()
@@ -489,6 +490,8 @@ def run_benchmark_mode(args):
     if not args.quiet:
         console.print(f"\n[dim]Saved: {args.output}[/dim]")
         console.print("[bold green]Done[/bold green]\n")
+
+    clear_decoder_cache()
 
 def main():
     args = parse_args()

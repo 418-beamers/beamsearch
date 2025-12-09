@@ -138,8 +138,12 @@ class CTCBeamSearchDecoder:
         )
 
     def __del__(self):
-        if hasattr(self, "state_ptr"):
-            self._ext.free_state(self.state_ptr)
+        if hasattr(self, "state_ptr") and self.state_ptr is not None:
+            if hasattr(self, "_ext") and self._ext is not None:
+                try:
+                    self._ext.free_state(self.state_ptr)
+                except Exception:
+                    pass  # extension may already be unloaded
 
     def decode(
         self,

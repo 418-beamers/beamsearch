@@ -38,8 +38,16 @@ def _get_schedule_hash(schedule_config):
     )
 
 def clear_decoder_cache():
-    """Clear cached CUDA decoder (call between benchmark runs with different params)."""
     global _cuda_decoder_cache
+    decoder = _cuda_decoder_cache["decoder"]
+    if decoder is not None:
+        # explicitly free CUDA state before garbage collection
+        try:
+            if hasattr(decoder, '_ext') and decoder._ext is not None:
+                decoder._ext.free_state(decoder.state_ptr)
+                decoder.state_ptr = None 
+        except Exception:
+            pass
     _cuda_decoder_cache["decoder"] = None
     _cuda_decoder_cache["key"] = None
 
@@ -125,7 +133,7 @@ def run_cuda_decoder(
                 lut_path=schedule_config.get("lut_path", ""),
                 mlp_path=schedule_config.get("mlp_path", ""),
             )
-            
+
         else:
             schedule = BeamSchedule()
 
