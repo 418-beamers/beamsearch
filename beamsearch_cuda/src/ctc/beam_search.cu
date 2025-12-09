@@ -160,7 +160,7 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
             thrust::device_ptr<const int>(input_lengths),
             thrust::device_ptr<const int>(input_lengths + config_.batch_size)
         );
-        
+
         cudaStreamSynchronize(stream);
         max_input_length = *max_it;
     }
@@ -313,7 +313,7 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
         );
 
         ::top_k<<<config_.batch_size, 256, 0, stream>>>(
-            state_, config_, num_unique, t, current_beam_width
+            state_, config_, num_unique, t, current_beam_width, input_lengths
         );
     }
 }
