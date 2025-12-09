@@ -73,8 +73,9 @@ def run_acoustic_model(
                 ).long()
             log_probs = torch.log_softmax(emissions, dim=-1)
 
-        all_log_probs.append(log_probs.cpu())
-        all_lengths.append(lengths.cpu())
+        # keep on GPU - decoders will move to CPU if needed
+        all_log_probs.append(log_probs)
+        all_lengths.append(lengths)
         all_refs.extend([s[1] for s in batch])
         total_audio += sum(s[2] for s in batch)
 

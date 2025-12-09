@@ -50,8 +50,12 @@ def run_torchaudio_flashlight(
         beam_threshold=beam_threshold,
     )
 
+    # move to CPU before timing (fair comparison - data transfer not counted)
+    lp_cpu = log_probs.cpu().float()
+    ln_cpu = lengths.cpu().int()
+
     start = time.perf_counter()
-    results = decoder(log_probs.cpu().float(), lengths.cpu().int())
+    results = decoder(lp_cpu, ln_cpu)
     elapsed = time.perf_counter() - start
 
     hypotheses = [
@@ -74,7 +78,6 @@ def run_cuda_decoder(
     B, T, V = log_probs.shape
 
     if schedule_config and schedule_config.get("adaptive"):
-
         type_map = {"naive": SchedulerType.NAIVE, "lut": SchedulerType.LUT, "mlp": SchedulerType.MLP}
         schedule = BeamSchedule(
             adaptive_beam_width=True,
@@ -101,9 +104,15 @@ def run_cuda_decoder(
         schedule=schedule,
     )
 
-    lp = log_probs.cuda().float().contiguous()
-    ln = lengths.cuda().int().contiguous()
+    # ensure data is on GPU and contiguous before timing
+    lp = log_probs.cuda().float()
+    ln = lengths.cuda().int()
+    if not lp.is_contiguous():
+        lp = lp.contiguous()
+    if not ln.is_contiguous():
+        ln = ln.contiguous()
 
+    # sync before timing to ensure data transfer is complete
     torch.cuda.synchronize()
     start = time.perf_counter()
     seqs, lens, scores = decoder.decode(lp, ln)
@@ -133,6 +142,7 @@ def run_pyctcdecode(
     labels = ["" if i == blank_idx else (' ' if t == '|' else t) for i, t in enumerate(tokens)]
     decoder = build_ctcdecoder(labels=labels)
 
+    # move to CPU before timing (fair comparison)
     lp = log_probs.cpu().numpy()
     ln = lengths.cpu().tolist()
 
@@ -152,20 +162,18 @@ def run_pyctcdecode_parallel(
     blank_idx: int,
     beam_size: int,
 ) -> DecoderResult | None:
-
     from pyctcdecode import build_ctcdecoder
     import multiprocessing as mp
 
     labels = ["" if i == blank_idx else (' ' if t == '|' else t) for i, t in enumerate(tokens)]
     decoder = build_ctcdecoder(labels=labels)
 
+    # move to CPU before timing (fair comparison)
     lp = log_probs.cpu().numpy()
     ln = lengths.cpu().tolist()
     logits_list = [lp[b, : int(ln[b]), :] for b in range(lp.shape[0])]
 
     start = time.perf_counter()
-
-    # run on mp for some parallelism
     with mp.get_context("fork").Pool() as pool:
         hypotheses = decoder.decode_batch(pool=pool, logits_list=logits_list, beam_width=beam_size)
     elapsed = time.perf_counter() - start

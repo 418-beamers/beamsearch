@@ -59,7 +59,7 @@ DEFAULT_MLP_FILENAME = "mlp_weights.bin"
 SOURCE_MLP_WEIGHTS = PROJECT_ROOT / "beamsearch_cuda" / "src" / "scheduler" / "mlp" / "mlp_weights.bin"
 
 BENCHMARK_DEFAULTS = {
-    "num_samples": 500,
+    "num_samples": 100,
     "batch_size": 32,
     "beam_size": 50,
     "beam_threshold": 20.0,
