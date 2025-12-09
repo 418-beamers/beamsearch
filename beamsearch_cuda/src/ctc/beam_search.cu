@@ -152,8 +152,23 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
     } else {
         current_beam_width = config_.beam_width;
     }
+
+    int max_input_length = config_.max_time;
+    if (input_lengths != nullptr) {
+        auto max_it = thrust::max_element(
+            thrust::cuda::par.on(stream),
+            thrust::device_ptr<const int>(input_lengths),
+            thrust::device_ptr<const int>(input_lengths + config_.batch_size)
+        );
+
+        cudaStreamSynchronize(stream);
+        max_input_length = *max_it;
+    }
     
     for (int t = 0; t < config_.max_time; ++t) {
+        if (t >= max_input_length) {
+            break;
+        }
         float current_entropy = 0.0f;
 
         // compute average entropy across all batches
@@ -298,7 +313,7 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
         );
 
         ::top_k<<<config_.batch_size, 256, 0, stream>>>(
-            state_, config_, num_unique, t, current_beam_width
+            state_, config_, num_unique, t, current_beam_width, input_lengths
         );
     }
 }

@@ -6,10 +6,13 @@ __global__ void top_k(
     CTCBeamSearchConfig config,
     int num_unique,
     int time_step,
-    int beam_width
+    int beam_width,
+    const int* input_lengths
 ) {
     int batchIdx = blockIdx.x;
     if (batchIdx >= config.batch_size) return;
+    
+    if (input_lengths != nullptr && time_step >= input_lengths[batchIdx]) return;
 
     // finding the start index for hypotheses in the current batch
     int left = 0;
