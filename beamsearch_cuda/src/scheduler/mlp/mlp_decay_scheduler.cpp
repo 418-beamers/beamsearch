@@ -31,7 +31,7 @@ bool MLPDecayScheduler::loadFromFile(const std::string& filename) {
   infile.read((char*)b2.data(), b2.size() * sizeof(float));
 
   infile.close();
-  std::cout << "MLP Loaded (" << input_size << "->" << hidden_size << "->" << output_size << ")\n";
+  // std::cout << "MLP Loaded (" << input_size << "->" << hidden_size << "->" << output_size << ")\n";
   return true;
 }
 

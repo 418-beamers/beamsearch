@@ -30,7 +30,7 @@ conda create -n beams python=3.10 -y
 conda activate beams
 python -m pip install --upgrade pip setuptools wheel ninja
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-python -m pip install flashlight-text rich soundfile
+python -m pip install flashlight-text rich soundfile pyctcdecode
 ```
 
 Might also have to run these to add CUDA toolkit to path: 
@@ -67,6 +67,11 @@ Run real audio test:
 python testing/ctc_decoder_test.py --real --candidate-device cuda --verbose
 ```
 
+Run LibriSpeech benchmark:
+```bash
+python testing/ctc_decoder_test.py --benchmark
+```
+
 # Testing Module
 
 The `testing/ctc_decoder_test.py` script accepts several arguments to control the test parameters:
@@ -88,6 +93,17 @@ The `testing/ctc_decoder_test.py` script accepts several arguments to control th
 **Real Audio Mode:**
 - `--real`: Use real audio with pre-trained Wav2Vec2 ASR model instead of synthetic data
 - `--audio-file`: Path to audio file for real mode (if not provided, downloads a sample)
+
+**Benchmark Mode:**
+- `--benchmark`: Run LibriSpeech benchmark with WER/CER metrics
+- `-n, --num-samples`: Number of samples to evaluate (default: 100)
+- `--max-duration`: Maximum audio duration in seconds (default: 15.0)
+- `--data-dir`: Directory for LibriSpeech data (default: `./data`)
+- `-o, --output`: Output JSON file for results (default: `benchmark_results.json`)
+- `--decoders`: Specific decoders to run (choices: `cuda-beamsearch`, `torchaudio-flashlight`, `pyctcdecode`, `pyctcdecode-batch`)
+- `--sweep`: Parameter to sweep (`beam_width` or `batch_size`)
+- `--beam-min/max/step`: Beam width sweep range (default: 10-100, step 10)
+- `--batch-min/max/step`: Batch size sweep range (default: 1-32, step 4)
 
 **Adaptive Beam Width Scheduling:**
 - `--adaptive-beam-width`: Enable adaptive beam width scheduling (beam width decays over time)
@@ -161,6 +177,29 @@ python testing/ctc_decoder_test.py --real --candidate-device cuda \
     --schedule-init 50 --schedule-min 10
 ```
 
+**LibriSpeech Benchmark Mode**
+
+Run full benchmark on LibriSpeech test-other (compares all decoders with WER/CER metrics):
+```bash
+python testing/ctc_decoder_test.py --benchmark
+```
+
+Run sensitivity sweep over beam width:
+```bash
+python testing/ctc_decoder_test.py --benchmark --sweep beam_width --beam-min 10 --beam-max 100 --beam-step 10
+```
+
+Run sensitivity sweep over batch size:
+```bash
+python testing/ctc_decoder_test.py --benchmark --sweep batch_size --batch-min 1 --batch-max 32 --batch-step 4
+```
+
+Run benchmark with MLP adaptive beam scheduling:
+```bash
+python testing/ctc_decoder_test.py --benchmark --adaptive-beam-width --scheduler-type mlp \
+    --schedule-min 5 --schedule-init 50
+```
+
 ## Test Module Structure
 
 The testing harness is organized into modular components under `testing/utils/`:
@@ -168,15 +207,17 @@ The testing harness is organized into modular components under `testing/utils/`:
 ```
 testing/
 ├── beamers_sample.wav      # custom sample audio for testing
-├── bin                     # directory for lut, mlp binaries
-├── ctc_decoder_test.py     # main test script
+├── bin/                    # directory for lut, mlp binaries
+├── ctc_decoder_test.py     # main test script (synthetic, real audio, benchmark modes)
 ├── env_test.py             # environment validation script
-└── utils
-    ├── __init__.py         # module expors
+└── utils/
+    ├── __init__.py         # module exports
+    ├── benchmark.py        # LibriSpeech benchmark utilities
     ├── inputs.py           # synthetic input generation
     ├── loaders.py          # extension loading
     ├── real_audio.py       # wav2vec audio processing for real ASR testing
-    ├── similarity.py       # distance metrics
-    ├── timing.py           # benchmarking utils
+    ├── runners.py          # decoder runner functions
+    ├── similarity.py       # distance metrics (WER, CER, edit distance)
+    ├── timing.py           # timing utilities
     └── tokenization.py     # vocab handling
 ```

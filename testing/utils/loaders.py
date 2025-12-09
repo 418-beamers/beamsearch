@@ -18,7 +18,7 @@ def get_project_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
-def load_candidate_module() -> Optional[Any]:
+def load_candidate_module():
 
     global _cuda_decoder_module
 
