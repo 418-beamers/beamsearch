@@ -17,6 +17,7 @@ from .runners import (
     run_cuda_decoder,
     run_pyctcdecode,
     run_pyctcdecode_parallel,
+    clear_decoder_cache,
 )
 
 console = Console()
@@ -53,8 +54,11 @@ def run_acoustic_model(
 ): 
     all_log_probs, all_lengths, all_refs, total_audio = [], [], [], 0
 
+    # first pass: get all emissions to find max time
+    batch_emissions = []
+    batch_lengths = []
+    
     for i in range(0, len(samples), batch_size):
-
         batch = samples[i : i + batch_size]
         waves = [s[0] for s in batch]
         wave_lens = [w.shape[0] for w in waves]
@@ -73,11 +77,25 @@ def run_acoustic_model(
                 ).long()
             log_probs = torch.log_softmax(emissions, dim=-1)
 
-        # keep on GPU - decoders will move to CPU if needed
-        all_log_probs.append(log_probs)
-        all_lengths.append(lengths)
+        batch_emissions.append(log_probs)
+        batch_lengths.append(lengths)
         all_refs.extend([s[1] for s in batch])
         total_audio += sum(s[2] for s in batch)
+
+    # find global max time across all batches
+    global_max_time = max(e.shape[1] for e in batch_emissions)
+    vocab_size = batch_emissions[0].shape[2]
+
+    # pad all batches to same max_time for consistent decoder dimensions
+    for log_probs, lengths in zip(batch_emissions, batch_lengths):
+        B, T, V = log_probs.shape
+        if T < global_max_time:
+            # pad with log(0) = -inf for non-blank, log(1) = 0 for blank
+            padding = torch.full((B, global_max_time - T, V), float('-inf'), device=log_probs.device)
+            padding[:, :, 0] = 0  # blank token gets probability 1
+            log_probs = torch.cat([log_probs, padding], dim=1)
+        all_log_probs.append(log_probs)
+        all_lengths.append(lengths)
 
     return all_log_probs, all_lengths, all_refs, total_audio
 

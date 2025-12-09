@@ -27,6 +27,7 @@ from .runners import (
     run_cuda_decoder,
     run_pyctcdecode,
     run_pyctcdecode_parallel,
+    clear_decoder_cache,
 )
 from .benchmark import (
     load_librispeech,
@@ -76,13 +77,14 @@ __all__ = [
     "print_decoder_outputs",
     "load_candidate_module",
     "load_hello_extension",
-    "generate_test_inputs"
+    "generate_test_inputs",
     "DecoderResult",
     "tokens_to_text",
     "run_torchaudio_flashlight",
     "run_cuda_decoder",
     "run_pyctcdecode",
     "run_pyctcdecode_parallel",
+    "clear_decoder_cache",
     "load_librispeech",
     "run_acoustic_model",
     "run_all_decoders",

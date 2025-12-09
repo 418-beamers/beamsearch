@@ -17,6 +17,32 @@ class DecoderResult:
     time_seconds: float
     device: str
 
+# cached CUDA decoder to avoid reconstruction overhead
+_cuda_decoder_cache = {
+    "decoder": None,
+    "key": None,  # (B, T, V, beam_size, schedule_config_hash)
+}
+
+def _get_schedule_hash(schedule_config):
+    if not schedule_config:
+        return None
+    return (
+        schedule_config.get("adaptive"),
+        schedule_config.get("type"),
+        schedule_config.get("a"),
+        schedule_config.get("b"),
+        schedule_config.get("c"),
+        schedule_config.get("min"),
+        schedule_config.get("init"),
+        schedule_config.get("init_steps"),
+    )
+
+def clear_decoder_cache():
+    """Clear cached CUDA decoder (call between benchmark runs with different params)."""
+    global _cuda_decoder_cache
+    _cuda_decoder_cache["decoder"] = None
+    _cuda_decoder_cache["key"] = None
+
 def tokens_to_text(indices: List[int], tokens: List[str], blank_idx: int) -> str:
     chars = []
     for idx in indices:
@@ -75,34 +101,45 @@ def run_cuda_decoder(
 ) -> DecoderResult | None:
     from beamsearch_cuda.beam_search import CTCBeamSearchDecoder, BeamSchedule, SchedulerType
 
+    global _cuda_decoder_cache
+
     B, T, V = log_probs.shape
+    cache_key = (B, T, V, beam_size, blank_idx, _get_schedule_hash(schedule_config))
 
-    if schedule_config and schedule_config.get("adaptive"):
-        type_map = {"naive": SchedulerType.NAIVE, "lut": SchedulerType.LUT, "mlp": SchedulerType.MLP}
-        schedule = BeamSchedule(
-            adaptive_beam_width=True,
-            scheduler_type=type_map[schedule_config["type"]],
-            a=schedule_config["a"],
-            b=schedule_config["b"],
-            c=schedule_config["c"],
-            min=schedule_config["min"],
-            init=schedule_config["init"] if schedule_config["init"] > 0 else beam_size,
-            init_steps=schedule_config["init_steps"],
-            lut_path=schedule_config.get("lut_path", ""),
-            mlp_path=schedule_config.get("mlp_path", ""),
-        )
+    # reuse cached decoder if dimensions match
+    if _cuda_decoder_cache["key"] == cache_key and _cuda_decoder_cache["decoder"] is not None:
+        decoder = _cuda_decoder_cache["decoder"]
     else:
-        schedule = BeamSchedule()
+        if schedule_config and schedule_config.get("adaptive"):
 
-    decoder = CTCBeamSearchDecoder(
-        beam_width=beam_size,
-        num_classes=V,
-        max_output_length=T,
-        blank_id=blank_idx,
-        batch_size=B,
-        max_time=T,
-        schedule=schedule,
-    )
+            type_map = {"naive": SchedulerType.NAIVE, "lut": SchedulerType.LUT, "mlp": SchedulerType.MLP}
+            schedule = BeamSchedule(
+                adaptive_beam_width=True,
+                scheduler_type=type_map[schedule_config["type"]],
+                a=schedule_config["a"],
+                b=schedule_config["b"],
+                c=schedule_config["c"],
+                min=schedule_config["min"],
+                init=schedule_config["init"] if schedule_config["init"] > 0 else beam_size,
+                init_steps=schedule_config["init_steps"],
+                lut_path=schedule_config.get("lut_path", ""),
+                mlp_path=schedule_config.get("mlp_path", ""),
+            )
+            
+        else:
+            schedule = BeamSchedule()
+
+        decoder = CTCBeamSearchDecoder(
+            beam_width=beam_size,
+            num_classes=V,
+            max_output_length=T,
+            blank_id=blank_idx,
+            batch_size=B,
+            max_time=T,
+            schedule=schedule,
+        )
+        _cuda_decoder_cache["decoder"] = decoder
+        _cuda_decoder_cache["key"] = cache_key
 
     # ensure data is on GPU and contiguous before timing
     lp = log_probs.cuda().float()
