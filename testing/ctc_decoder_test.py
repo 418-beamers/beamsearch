@@ -454,7 +454,8 @@ def run_benchmark_mode(args):
 
         if not args.quiet:
             for name, r in final_results.items():
-                console.print(f"  [green]{name}: WER={r['wer']*100:.2f}% RTFx={r['rtfx']:.0f}[/green]")
+                speedup = r.get('speedup', 1.0)
+                console.print(f"  [green]{name}: WER={r['wer']*100:.2f}% CER={r['cer']*100:.2f}% RTFx={r['rtfx']:.0f} Speedup={speedup:.2f}x[/green]")
             title = f"Results (beam={current_beam})" if sweep_param else "Results"
             print_benchmark_table(final_results, title=title)
 

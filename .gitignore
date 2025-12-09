@@ -261,3 +261,5 @@ __marimo__/
 
 # MLP Weights
 *.bin
+
+data/

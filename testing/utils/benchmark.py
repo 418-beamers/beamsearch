@@ -150,6 +150,12 @@ def compute_benchmark_metrics(
             "device": data["device"],
         }
 
+    # compute speedup relative to slowest decoder
+    if final:
+        slowest_time = max(r["time"] for r in final.values())
+        for name in final:
+            final[name]["speedup"] = slowest_time / final[name]["time"] if final[name]["time"] > 0 else 0
+
     return final
 
 
@@ -161,15 +167,19 @@ def print_benchmark_table(final_results, title: str = "Results"):
     table.add_column("WER %", justify="right")
     table.add_column("CER %", justify="right")
     table.add_column("RTFx", justify="right", style="green")
+    table.add_column("Speedup", justify="right", style="magenta")
     table.add_column("Time (s)", justify="right")
 
-    for name, r in sorted(final_results.items(), key=lambda x: -x[1]["rtfx"]):
+    # sort from slowest to fastest (ascending RTFx)
+    for name, r in sorted(final_results.items(), key=lambda x: x[1]["rtfx"]):
+        speedup = r.get("speedup", 1.0)
         table.add_row(
             name,
             r["device"],
             f"{r['wer']*100:.2f}",
             f"{r['cer']*100:.2f}",
             f"{r['rtfx']:.0f}",
+            f"{speedup:.2f}x",
             f"{r['time']:.2f}",
         )
     console.print(table)
@@ -185,17 +195,24 @@ def print_sweep_summary(
     decoder_names = list(all_sweep_results[0]["results"].keys())
     for name in decoder_names:
         summary.add_column(f"{name} RTFx", justify="right", style="green")
+        summary.add_column(f"{name} Speedup", justify="right", style="magenta")
         summary.add_column(f"{name} WER%", justify="right")
+        summary.add_column(f"{name} CER%", justify="right")
 
     for entry in all_sweep_results:
         row = [str(entry[sweep_param])]
         for name in decoder_names:
             if name in entry["results"]:
-                row.extend(
-                    [f"{entry['results'][name]['rtfx']:.0f}", f"{entry['results'][name]['wer']*100:.2f}"]
-                )
+                r = entry["results"][name]
+                speedup = r.get("speedup", 1.0)
+                row.extend([
+                    f"{r['rtfx']:.0f}",
+                    f"{speedup:.2f}x",
+                    f"{r['wer']*100:.2f}",
+                    f"{r['cer']*100:.2f}",
+                ])
             else:
-                row.extend(["N/A", "N/A"])
+                row.extend(["N/A", "N/A", "N/A", "N/A"])
         summary.add_row(*row)
 
     console.print(summary)
