@@ -99,3 +99,16 @@ def summarize_similarity(
     print(f"avg_edit_distance={avg_distance:.3f}")
     return avg_distance
 
+def compute_wer_cer(refs, hyps):
+    word_errors, word_total, char_errors, char_total = 0, 0, 0, 0
+
+    for ref, hyp in zip(refs, hyps):
+        ref, hyp = ref.lower().strip(), hyp.lower().strip()
+        word_errors += levenshtein_distance(ref.split(), hyp.split())
+        word_total += len(ref.split())
+        char_errors += levenshtein_distance(list(ref), list(hyp))
+        char_total += len(ref)
+
+    wer = word_errors / word_total if word_total else 0
+    cer = char_errors / char_total if char_total else 0
+    return wer, cer

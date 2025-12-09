@@ -9,6 +9,7 @@ from .similarity import (
     longest_common_prefix_length,
     compute_avg_edit_distance,
     summarize_similarity,
+    compute_wer_cer,
 )
 from .tokenization import (
     make_tokens,
@@ -19,6 +20,22 @@ from .tokenization import (
 )
 from .loaders import load_candidate_module, load_hello_extension
 from .inputs import generate_test_inputs
+from .runners import (
+    DecoderResult,
+    tokens_to_text,
+    run_torchaudio_flashlight,
+    run_cuda_decoder,
+    run_pyctcdecode,
+    run_pyctcdecode_parallel,
+)
+from .benchmark import (
+    load_librispeech,
+    run_acoustic_model,
+    run_all_decoders,
+    compute_benchmark_metrics,
+    print_benchmark_table,
+    print_sweep_summary,
+)
 
 try:
     from .real_audio import (
@@ -51,6 +68,7 @@ __all__ = [
     "longest_common_prefix_length",
     "compute_avg_edit_distance",
     "summarize_similarity",
+    "compute_wer_cer",
     "make_tokens",
     "detokenize",
     "format_reference_outputs",
@@ -58,7 +76,19 @@ __all__ = [
     "print_decoder_outputs",
     "load_candidate_module",
     "load_hello_extension",
-    "generate_test_inputs",
+    "generate_test_inputs"
+    "DecoderResult",
+    "tokens_to_text",
+    "run_torchaudio_flashlight",
+    "run_cuda_decoder",
+    "run_pyctcdecode",
+    "run_pyctcdecode_parallel",
+    "load_librispeech",
+    "run_acoustic_model",
+    "run_all_decoders",
+    "compute_benchmark_metrics",
+    "print_benchmark_table",
+    "print_sweep_summary",
     "is_real_audio_available",
     "RealAudioInputs",
     "generate_real_audio_inputs",
