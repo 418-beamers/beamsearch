@@ -106,6 +106,7 @@ def run_cuda_decoder(
     blank_idx: int,
     beam_size: int,
     schedule_config = None,
+    use_cache: bool = True,
 ) -> DecoderResult | None:
     from beamsearch_cuda.beam_search import CTCBeamSearchDecoder, BeamSchedule, SchedulerType
 
@@ -114,8 +115,7 @@ def run_cuda_decoder(
     B, T, V = log_probs.shape
     cache_key = (B, T, V, beam_size, blank_idx, _get_schedule_hash(schedule_config))
 
-    # reuse cached decoder if dimensions match
-    if _cuda_decoder_cache["key"] == cache_key and _cuda_decoder_cache["decoder"] is not None:
+    if use_cache and _cuda_decoder_cache["key"] == cache_key and _cuda_decoder_cache["decoder"] is not None:
         decoder = _cuda_decoder_cache["decoder"]
     else:
         if schedule_config and schedule_config.get("adaptive"):
@@ -146,8 +146,9 @@ def run_cuda_decoder(
             max_time=T,
             schedule=schedule,
         )
-        _cuda_decoder_cache["decoder"] = decoder
-        _cuda_decoder_cache["key"] = cache_key
+        if use_cache:
+            _cuda_decoder_cache["decoder"] = decoder
+            _cuda_decoder_cache["key"] = cache_key
 
     # ensure data is on GPU and contiguous before timing
     lp = log_probs.cuda().float()

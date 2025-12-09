@@ -133,6 +133,7 @@ def parse_args():
     p.add_argument("--data-dir", type=str, default=BENCHMARK_DEFAULTS["data_dir"])
     p.add_argument("-o", "--output", type=str, default=BENCHMARK_DEFAULTS["output_file"])
     p.add_argument("--decoders", nargs="+", choices=["cuda-beamsearch", "torchaudio-flashlight", "pyctcdecode", "pyctcdecode-batch"])
+    p.add_argument("--rebuild-decoder", action="store_true", help="Rebuild CUDA decoder per batch (no padding, measures rebuild overhead)")
 
     p.add_argument("--sweep", choices=["beam_width", "batch_size"], help="Parameter to sweep")
     p.add_argument("--beam-min", type=int, default=10)
@@ -393,7 +394,7 @@ def run_benchmark_mode(args):
         console.print("\n[blue]Running acoustic model...[/blue]")
 
     all_log_probs, all_lengths, all_refs, total_audio = run_acoustic_model(
-        samples, model, device, args.batch_size
+        samples, model, device, args.batch_size, pad_to_max=not args.rebuild_decoder
     )
 
     if not args.quiet:
@@ -436,7 +437,7 @@ def run_benchmark_mode(args):
 
             current_batch = sweep_val
             all_log_probs, all_lengths, all_refs, total_audio = run_acoustic_model(
-                samples, model, device, sweep_val
+                samples, model, device, sweep_val, pad_to_max=not args.rebuild_decoder
             )
 
             if not args.quiet:
@@ -449,6 +450,7 @@ def run_benchmark_mode(args):
             all_log_probs, all_lengths, tokens, blank_idx,
             beam_size=current_beam, beam_threshold=args.beam_threshold,
             schedule_config=schedule_config, decoder_filter=args.decoders, quiet=args.quiet,
+            cache_cuda_decoder=not args.rebuild_decoder,
         )
 
         final_results = compute_benchmark_metrics(results, all_refs, total_audio)

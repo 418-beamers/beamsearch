@@ -51,10 +51,9 @@ def run_acoustic_model(
     model: torch.nn.Module,
     device: torch.device,
     batch_size: int,
+    pad_to_max: bool = True,
 ): 
     all_log_probs, all_lengths, all_refs, total_audio = [], [], [], 0
-
-    # first pass: get all emissions to find max time
     batch_emissions = []
     batch_lengths = []
     
@@ -82,20 +81,28 @@ def run_acoustic_model(
         all_refs.extend([s[1] for s in batch])
         total_audio += sum(s[2] for s in batch)
 
-    # find global max time across all batches
-    global_max_time = max(e.shape[1] for e in batch_emissions)
+    # diagnostic info
+    min_time = min(e.shape[1] for e in batch_emissions)
+    max_time = max(e.shape[1] for e in batch_emissions)
+    avg_time = sum(e.shape[1] for e in batch_emissions) / len(batch_emissions)
     vocab_size = batch_emissions[0].shape[2]
+    num_batches = len(batch_emissions)
+    mode = "padded" if pad_to_max else "variable"
+    console.print(f"[dim]Batches: {num_batches}, Seq lengths: min={min_time}, avg={avg_time:.0f}, max={max_time}, vocab={vocab_size} ({mode})[/dim]")
 
-    # pad all batches to same max_time for consistent decoder dimensions
-    for log_probs, lengths in zip(batch_emissions, batch_lengths):
-        B, T, V = log_probs.shape
-        if T < global_max_time:
-            # pad with log(0) = -inf for non-blank, log(1) = 0 for blank
-            padding = torch.full((B, global_max_time - T, V), float('-inf'), device=log_probs.device)
-            padding[:, :, 0] = 0  # blank token gets probability 1
-            log_probs = torch.cat([log_probs, padding], dim=1)
-        all_log_probs.append(log_probs)
-        all_lengths.append(lengths)
+    if pad_to_max:
+        for log_probs, lengths in zip(batch_emissions, batch_lengths):
+            B, T, V = log_probs.shape
+            if T < max_time:
+                padding = torch.full((B, max_time - T, V), float('-inf'), device=log_probs.device)
+                padding[:, :, 0] = 0 
+                log_probs = torch.cat([log_probs, padding], dim=1)
+            all_log_probs.append(log_probs)
+            all_lengths.append(lengths)
+    else:
+        # keep original sizes (decoder will be rebuilt per batch)
+        all_log_probs = batch_emissions
+        all_lengths = batch_lengths
 
     return all_log_probs, all_lengths, all_refs, total_audio
 
@@ -110,10 +117,11 @@ def run_all_decoders(
     schedule_config = None,
     decoder_filter = None,
     quiet: bool = False,
+    cache_cuda_decoder: bool = True,
 ):
     all_decoders = {
         "cuda-beamsearch": lambda lp, ln: run_cuda_decoder(
-            lp, ln, tokens, blank_idx, beam_size, schedule_config
+            lp, ln, tokens, blank_idx, beam_size, schedule_config, use_cache=cache_cuda_decoder
         ),
         "torchaudio-flashlight": lambda lp, ln: run_torchaudio_flashlight(
             lp, ln, tokens, blank_idx, beam_size, beam_threshold
