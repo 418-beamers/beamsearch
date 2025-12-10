@@ -6,7 +6,8 @@
 
 __global__ void reconstruct(
     CTCBeamSearchState state,
-    CTCBeamSearchConfig config
+    CTCBeamSearchConfig config,
+    const int* input_lengths
 );
 
 #endif

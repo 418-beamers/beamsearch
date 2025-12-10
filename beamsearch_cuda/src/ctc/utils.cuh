@@ -26,7 +26,7 @@ struct BatchScoreComp {
     }
 };
 
-__host__ __device__ __forceinline__ float log_add_helper(float a, float b) {
+__host__ __device__ __forceinline__ float log_add(float a, float b) {
     if (a <= NEG_INF) return b;
     if (b <= NEG_INF) return a;
     float maxVal = fmaxf(a, b);
@@ -42,7 +42,7 @@ struct ScoreAndIndexReduce {
         
         float b_sb  = thrust::get<0>(b);
         float b_snb = thrust::get<1>(b);
-        return thrust::make_tuple(log_add_helper(a_sb, b_sb), log_add_helper(a_snb, b_snb), thrust::get<2>(a));
+        return thrust::make_tuple(log_add(a_sb, b_sb), log_add(a_snb, b_snb), thrust::get<2>(a));
     }
 };
 
@@ -51,7 +51,7 @@ struct CalcTotalScore {
     float operator()(const thrust::tuple<float, float>& t) const {
         float sb  = thrust::get<0>(t);
         float snb = thrust::get<1>(t);
-        return log_add_helper(sb, snb);
+        return log_add(sb, snb);
     }
 };
 

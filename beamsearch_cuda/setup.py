@@ -11,6 +11,8 @@ setup(
                 'src/ctc/beam_search.cu',
                 'src/ctc/kernels/initialize.cu',
                 'src/ctc/kernels/expand.cu',
+                'src/ctc/kernels/prune.cu',
+                'src/ctc/kernels/compact.cu',
                 'src/ctc/kernels/top_k.cu',
                 'src/ctc/kernels/reconstruct.cu',
                 'src/scheduler/scheduler.cpp',

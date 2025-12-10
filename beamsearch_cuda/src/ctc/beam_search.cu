@@ -4,6 +4,8 @@
 #include "kernels/expand.cuh"
 #include "kernels/top_k.cuh"
 #include "kernels/reconstruct.cuh"
+#include "kernels/prune.cuh"
+#include "kernels/compact.cuh"
 #include "../scheduler/scheduler.h"
 #include "../scheduler/mlp/mlp_decay_scheduler.h"
 
@@ -62,7 +64,7 @@ CTCBeamSearch::~CTCBeamSearch() {
 void CTCBeamSearch::decode(const float* log_probs, const int* input_lengths, cudaStream_t stream) {
     initialize(stream);
     launch(log_probs, input_lengths, stream);
-    reconstruct(stream);
+    reconstruct(input_lengths, stream);
     cudaMemcpyAsync(state_.output.scores, state_.beam.score_total, 
                     config_.batch_size * config_.beam_width * sizeof(float), cudaMemcpyDeviceToDevice, stream);
 }
@@ -181,8 +183,24 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
         current_beam_width = compute_beam_width(t, current_entropy);
         beam_width_history_.push_back(current_beam_width); 
 
+        bool use_pruning = (config_.prob_top_k < config_.num_classes);
+        if (use_pruning) {
+            int shared_mem_size = config_.num_classes * (sizeof(float) + sizeof(int));
+            ::select_top_k<<<config_.batch_size, 256, shared_mem_size, stream>>>(
+                log_probs + (long long)t * config_.batch_size * config_.num_classes,
+                state_.beam.top_k_tokens,
+                config_.num_classes,
+                config_.prob_top_k,
+                config_.batch_size,
+                config_.blank_id,
+                config_.token_min_logp
+            );
+        }
+
+        int expansion_factor = use_pruning ? (config_.prob_top_k + 1) : config_.num_classes;
+
         int num_active_beams = config_.batch_size * current_beam_width;
-        int num_active_candidates = num_active_beams * config_.num_classes;
+        int num_active_candidates = num_active_beams * expansion_factor;
 
         int threads = 256;
         int expBlocks = (num_active_candidates + threads - 1) / threads;
@@ -192,13 +210,13 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
             log_probs + (long long)t * config_.batch_size * config_.num_classes,
             input_lengths,
             t,
-            current_beam_width
+            current_beam_width,
+            expansion_factor
         );
 
         thrust::counting_iterator<int> iter(0);
         thrust::copy(thrust::cuda::par.on(stream), iter, iter + num_active_candidates, state_.cand.indices_sorted);
         
-        // sorting by key places duplicate hypotheses together (to be deduplicated) 
         thrust::sort_by_key(
             thrust::cuda::par.on(stream),
             thrust::device_ptr<unsigned int>(state_.cand.keys),
@@ -206,7 +224,6 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
             thrust::device_ptr<int>(state_.cand.indices_sorted)
         );
         
-        // here-207: pre-processing for reduce_by_key
         auto perm_pb = thrust::make_permutation_iterator(
             thrust::device_ptr<float>(state_.cand.score_blank),
             thrust::device_ptr<int>(state_.cand.indices_sorted)
@@ -243,58 +260,32 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
         
         int num_unique = new_end.first - thrust::device_ptr<unsigned int>(state_.unique.keys);
 
-
-        // here-252: pre-processing for summing blank, non-blank scores 
-        thrust::gather(
-            thrust::cuda::par.on(stream),
-            thrust::device_ptr<int>(state_.unique.indices),
-            thrust::device_ptr<int>(state_.unique.indices) + num_unique,
-            thrust::device_ptr<int>(state_.cand.token),
-            thrust::device_ptr<int>(state_.unique.token)
-        );
-
-        thrust::gather(
-            thrust::cuda::par.on(stream),
-            thrust::device_ptr<int>(state_.unique.indices),
-            thrust::device_ptr<int>(state_.unique.indices) + num_unique,
-            thrust::device_ptr<int>(state_.cand.last_token),
-            thrust::device_ptr<int>(state_.unique.last_token)
+        int compact_threads = 256;
+        int compact_blocks = (num_unique + compact_threads - 1) / compact_threads;
+        
+        ::compact_and_score_kernel<<<compact_blocks, compact_threads, 0, stream>>>(
+            num_unique,
+            state_.unique.indices,
+            state_.cand.token,
+            state_.cand.last_token,
+            state_.cand.parent_idx,
+            state_.unique.score_blank,
+            state_.unique.score_non_blank,
+            state_.unique.token,
+            state_.unique.last_token,
+            state_.unique.parent_idx,
+            state_.unique.score_total,
+            state_.unique.indices,
+            state_.unique.sort_keys,
+            state_.unique.keys,
+            config_.hash_bits
         );
         
-        thrust::gather(
+        thrust::sort_by_key(
             thrust::cuda::par.on(stream),
-            thrust::device_ptr<int>(state_.unique.indices),
-            thrust::device_ptr<int>(state_.unique.indices) + num_unique,
-            thrust::device_ptr<int>(state_.cand.parent_idx),
-            thrust::device_ptr<int>(state_.unique.parent_idx) 
-        );
-
-        auto unique_score_zip = thrust::make_zip_iterator(thrust::make_tuple(
-            thrust::device_ptr<float>(state_.unique.score_blank),
-            thrust::device_ptr<float>(state_.unique.score_non_blank)
-        ));
-
-        // summing blank, non-blank scores to get total scores
-        thrust::transform(
-            thrust::cuda::par.on(stream),
-            unique_score_zip,
-            unique_score_zip + num_unique,
-            thrust::device_ptr<float>(state_.unique.score_total),
-            CalcTotalScore()
-        );
-
-        thrust::sequence(
-            thrust::cuda::par.on(stream),
-            thrust::device_ptr<int>(state_.unique.indices),
-            thrust::device_ptr<int>(state_.unique.indices) + num_unique
-        );
-        
-        // sorting unique hypotheses within batch by total scores
-        thrust::sort(
-            thrust::cuda::par.on(stream),
-            thrust::device_ptr<int>(state_.unique.indices),
-            thrust::device_ptr<int>(state_.unique.indices) + num_unique,
-            BatchScoreComp(state_.unique.keys, state_.unique.score_total, config_.hash_bits)
+            thrust::device_ptr<unsigned long long>(state_.unique.sort_keys),
+            thrust::device_ptr<unsigned long long>(state_.unique.sort_keys) + num_unique,
+            thrust::device_ptr<int>(state_.unique.indices)
         );
 
         ::top_k<<<config_.batch_size, 256, 0, stream>>>(
@@ -303,11 +294,11 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
     }
 }
 
-void CTCBeamSearch::reconstruct(cudaStream_t stream) {
+void CTCBeamSearch::reconstruct(const int* input_lengths, cudaStream_t stream) {
     int num_beams = config_.batch_size * config_.beam_width;
     int threads = 256;
     int blocks = (num_beams + threads - 1) / threads;
-    ::reconstruct<<<blocks, threads, 0, stream>>>(state_, config_);
+    ::reconstruct<<<blocks, threads, 0, stream>>>(state_, config_, input_lengths);
 }
 
 cudaError_t CTCBeamSearch::allocate_state() {
@@ -323,6 +314,9 @@ cudaError_t CTCBeamSearch::allocate_state() {
     
     cudaMalloc(&state_.beam.history_parents, config_.max_time * num_beams * sizeof(int));
     cudaMalloc(&state_.beam.history_tokens, config_.max_time * num_beams * sizeof(int));
+    
+    int prune_alloc_size = (config_.prob_top_k > 0) ? config_.prob_top_k : 1;
+    cudaMalloc(&state_.beam.top_k_tokens, config_.batch_size * prune_alloc_size * sizeof(int));
     
     cudaMalloc(&state_.cand.keys, num_candidates * sizeof(unsigned int));
     cudaMalloc(&state_.cand.score_blank, num_candidates * sizeof(float));
@@ -342,7 +336,8 @@ cudaError_t CTCBeamSearch::allocate_state() {
     cudaMalloc(&state_.unique.token, num_candidates * sizeof(int));
     cudaMalloc(&state_.unique.last_token, num_candidates * sizeof(int));
     cudaMalloc(&state_.unique.indices, num_candidates * sizeof(int));
-    
+    cudaMalloc(&state_.unique.sort_keys, num_candidates * sizeof(unsigned long long));
+
     cudaMalloc(&state_.output.sequences, num_beams * config_.max_output_length * sizeof(int));
     cudaMalloc(&state_.output.lengths, num_beams * sizeof(int));
     cudaMalloc(&state_.output.scores, num_beams * sizeof(float));
@@ -359,6 +354,7 @@ void CTCBeamSearch::free_state() {
     cudaFree(state_.beam.last_tokens);
     cudaFree(state_.beam.history_parents);
     cudaFree(state_.beam.history_tokens);
+    cudaFree(state_.beam.top_k_tokens);
     cudaFree(state_.cand.keys);
     cudaFree(state_.cand.score_blank);
     cudaFree(state_.cand.score_non_blank);
@@ -375,8 +371,8 @@ void CTCBeamSearch::free_state() {
     cudaFree(state_.unique.token);
     cudaFree(state_.unique.last_token);
     cudaFree(state_.unique.indices);
+    cudaFree(state_.unique.sort_keys);
     cudaFree(state_.output.sequences);
     cudaFree(state_.output.lengths);
     cudaFree(state_.output.scores);
 }
-

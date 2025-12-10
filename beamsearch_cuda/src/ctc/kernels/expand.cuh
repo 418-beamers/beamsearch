@@ -10,7 +10,8 @@ __global__ void expand(
     const float* log_probs, 
     const int* input_lengths,
     int time_step,
-    int current_beam_width
+    int current_beam_width,
+    int expansion_factor
 );
 
 #endif

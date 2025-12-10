@@ -41,6 +41,8 @@ def _load_ctc_extension():
             src_dir / "beam_search.cu",
             src_dir / "kernels" / "initialize.cu",
             src_dir / "kernels" / "expand.cu",
+            src_dir / "kernels" / "prune.cu",
+            src_dir / "kernels" / "compact.cu",
             src_dir / "kernels" / "top_k.cu",
             src_dir / "kernels" / "reconstruct.cu",
             scheduler_dir / "scheduler.cpp",
@@ -94,6 +96,9 @@ class CTCBeamSearchDecoder:
         batch_size: int = 1,
         max_time: int = 100,
         schedule: BeamSchedule = None,
+        prob_top_k: int = 40,
+        beam_threshold: float = 100.0,
+        token_min_logp: float = -5.0,
     ):
         if schedule is None:
             schedule = BeamSchedule()
@@ -105,6 +110,9 @@ class CTCBeamSearchDecoder:
         self.batch_size = batch_size
         self.max_time = max_time
         self.schedule = schedule
+        self.prob_top_k = min(prob_top_k, num_classes)
+        self.beam_threshold = beam_threshold
+        self.token_min_logp = token_min_logp
         self._ext = _load_ctc_extension()
 
         batch_bits = math.ceil(math.log2(batch_size)) if batch_size > 1 else 1
@@ -134,6 +142,9 @@ class CTCBeamSearchDecoder:
             blank_id,
             batch_bits,
             hash_bits,
+            self.prob_top_k,
+            self.beam_threshold,
+            self.token_min_logp,
             schedule_config,
         )
 
