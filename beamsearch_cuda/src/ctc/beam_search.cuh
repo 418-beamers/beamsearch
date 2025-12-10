@@ -26,6 +26,7 @@ struct BeamSchedule {
     int min;
     int init;
     int init_steps;
+    int update_interval;
 
     // file path for LUT
     std::string lut_path;
@@ -41,6 +42,9 @@ struct CTCBeamSearchConfig {
     int blank_id;
     int batch_bits;
     int hash_bits;
+    int prob_top_k;
+    float beam_threshold;
+    float token_min_logp;
 
     BeamSchedule schedule;
 };
@@ -53,7 +57,8 @@ struct BeamState {
     int* current_lengths;    
     int* last_tokens;        
     int* history_parents;    
-    int* history_tokens;     
+    int* history_tokens;
+    int* top_k_tokens;     
 };
 
 struct CandidateState {
@@ -116,7 +121,7 @@ private:
 
     void initialize(cudaStream_t stream);
     void launch(const float* log_probs, const int* input_lengths, cudaStream_t stream);
-    void reconstruct(cudaStream_t stream);
+    void reconstruct(const int* input_lengths, cudaStream_t stream);
     cudaError_t allocate_state();
     void free_state();
 

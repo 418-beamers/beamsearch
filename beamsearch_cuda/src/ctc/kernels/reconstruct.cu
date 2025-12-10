@@ -3,7 +3,8 @@
 
 __global__ void reconstruct(
     CTCBeamSearchState state,
-    CTCBeamSearchConfig config
+    CTCBeamSearchConfig config,
+    const int* input_lengths
 ) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= config.batch_size * config.beam_width) return;
@@ -15,8 +16,12 @@ __global__ void reconstruct(
     int len = 0;
     int* myOutput = state.output.sequences + (batchIdx * config.beam_width + beamIdx) * config.max_output_length;
     
-    // reconstructing sequence from history tokens and parents
-    for (int t = config.max_time - 1; t >= 0; t--) {
+    int start_t = config.max_time - 1;
+    if (input_lengths != nullptr) {
+        start_t = input_lengths[batchIdx] - 1;
+    }
+
+    for (int t = start_t; t >= 0; t--) {
         int histIdx = t * config.batch_size * config.beam_width + batchIdx * config.beam_width + currentBeam;
         int token = state.beam.history_tokens[histIdx];
         int parent = state.beam.history_parents[histIdx];

@@ -53,12 +53,14 @@ def run_acoustic_model(
     batch_size: int,
     pad_to_max: bool = True,
 ): 
-    all_log_probs, all_lengths, all_refs, total_audio = [], [], [], 0
-    batch_emissions = []
-    batch_lengths = []
+    acoustic_batch_size = min(batch_size, 32)
     
-    for i in range(0, len(samples), batch_size):
-        batch = samples[i : i + batch_size]
+    all_log_probs, all_lengths, all_refs, total_audio = [], [], [], 0
+    accumulated_emissions = []
+    accumulated_lengths = []
+    
+    for i in range(0, len(samples), acoustic_batch_size):
+        batch = samples[i : i + acoustic_batch_size]
         waves = [s[0] for s in batch]
         wave_lens = [w.shape[0] for w in waves]
         max_len = max(wave_lens)
@@ -76,33 +78,50 @@ def run_acoustic_model(
                 ).long()
             log_probs = torch.log_softmax(emissions, dim=-1)
 
-        batch_emissions.append(log_probs)
-        batch_lengths.append(lengths)
+        accumulated_emissions.append(log_probs.cpu())
+        accumulated_lengths.append(lengths.cpu())
         all_refs.extend([s[1] for s in batch])
         total_audio += sum(s[2] for s in batch)
 
-    # diagnostic info
-    min_time = min(e.shape[1] for e in batch_emissions)
-    max_time = max(e.shape[1] for e in batch_emissions)
-    avg_time = sum(e.shape[1] for e in batch_emissions) / len(batch_emissions)
-    vocab_size = batch_emissions[0].shape[2]
-    num_batches = len(batch_emissions)
+    flat_emissions = [item for batch in accumulated_emissions for item in batch]
+    flat_lengths = [item for batch in accumulated_lengths for item in batch]
+
+    if flat_emissions:
+        min_time = min(e.shape[0] for e in flat_emissions)
+        max_time = max(e.shape[0] for e in flat_emissions)
+        avg_time = sum(e.shape[0] for e in flat_emissions) / len(flat_emissions)
+        vocab_size = flat_emissions[0].shape[1]
+    else:
+        min_time, max_time, avg_time, vocab_size = 0, 0, 0, 0
+
+    num_batches = (len(flat_emissions) + batch_size - 1) // batch_size
     mode = "padded" if pad_to_max else "variable"
-    console.print(f"[dim]Batches: {num_batches}, Seq lengths: min={min_time}, avg={avg_time:.0f}, max={max_time}, vocab={vocab_size} ({mode})[/dim]")
+    console.print(f"[dim]Batches: {num_batches} (size={batch_size}), Seq lengths: min={min_time}, avg={avg_time:.0f}, max={max_time}, vocab={vocab_size} ({mode})[/dim]")
 
     if pad_to_max:
-        for log_probs, lengths in zip(batch_emissions, batch_lengths):
-            B, T, V = log_probs.shape
-            if T < max_time:
-                padding = torch.full((B, max_time - T, V), float('-inf'), device=log_probs.device)
-                padding[:, :, 0] = 0 
-                log_probs = torch.cat([log_probs, padding], dim=1)
-            all_log_probs.append(log_probs)
-            all_lengths.append(lengths)
+        for i in range(0, len(flat_emissions), batch_size):
+            batch_emissions = flat_emissions[i : i + batch_size]
+            batch_lens = flat_lengths[i : i + batch_size]
+            
+            current_max_time = max(e.shape[0] for e in batch_emissions)
+            B = len(batch_emissions)
+            V = batch_emissions[0].shape[1]
+            
+            padded_batch = torch.full((B, current_max_time, V), float('-inf'))
+            padded_batch[:, :, 0] = 0 
+            
+            batch_len_tensor = torch.tensor([l.item() for l in batch_lens], dtype=torch.int32)
+            
+            for j, e in enumerate(batch_emissions):
+                T = e.shape[0]
+                padded_batch[j, :T, :] = e
+            
+            all_log_probs.append(padded_batch)
+            all_lengths.append(batch_len_tensor)
     else:
-        # keep original sizes (decoder will be rebuilt per batch)
-        all_log_probs = batch_emissions
-        all_lengths = batch_lengths
+        for i in range(0, len(flat_emissions), batch_size):
+             batch_emissions = flat_emissions[i : i + batch_size]
+             batch_lens = flat_lengths[i : i + batch_size]
 
     return all_log_probs, all_lengths, all_refs, total_audio
 
@@ -118,10 +137,11 @@ def run_all_decoders(
     decoder_filter = None,
     quiet: bool = False,
     cache_cuda_decoder: bool = True,
+    prob_top_k: int = 40,
 ):
     all_decoders = {
         "cuda-beamsearch": lambda lp, ln: run_cuda_decoder(
-            lp, ln, tokens, blank_idx, beam_size, schedule_config, use_cache=cache_cuda_decoder
+            lp, ln, tokens, blank_idx, beam_size, schedule_config, use_cache=cache_cuda_decoder, prob_top_k=prob_top_k
         ),
         "torchaudio-flashlight": lambda lp, ln: run_torchaudio_flashlight(
             lp, ln, tokens, blank_idx, beam_size, beam_threshold
@@ -197,7 +217,6 @@ def print_benchmark_table(final_results, title: str = "Results"):
     table.add_column("Speedup", justify="right", style="magenta")
     table.add_column("Time (s)", justify="right")
 
-    # sort from slowest to fastest (ascending RTFx)
     for name, r in sorted(final_results.items(), key=lambda x: x[1]["rtfx"]):
         speedup = r.get("speedup", 1.0)
         table.add_row(
@@ -229,7 +248,7 @@ def print_sweep_summary(
     for entry in all_sweep_results:
         row = [str(entry[sweep_param])]
         for name in decoder_names:
-            if name in entry["results"]:
+            if name in entry["results"]:    
                 r = entry["results"][name]
                 speedup = r.get("speedup", 1.0)
                 row.extend([

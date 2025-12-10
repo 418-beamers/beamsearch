@@ -113,7 +113,7 @@ def parse_args():
     p.add_argument("--real", action="store_true", help="Use real audio with Wav2Vec2")
     p.add_argument("--hello", action="store_true", help="Run hello-world CUDA extension test")
 
-    p.add_argument("--batch-size", type=int, default=2, help="Batch size")
+    p.add_argument("--batch-size", type=int, default=32, help="Batch size")
     p.add_argument("--beam-width", type=int, default=50, help="Beam width")
     p.add_argument("--beam-threshold", type=float, default=40.0, help="Beam threshold")
     p.add_argument("--seed", type=int, default=0, help="Random seed")
@@ -123,6 +123,7 @@ def parse_args():
     p.add_argument("--time-steps", type=int, default=120, help="Sequence length (synthetic)")
     p.add_argument("--vocab-size", type=int, default=32, help="Vocab size (synthetic)")
     p.add_argument("--top-k", type=int, default=3, help="Hypotheses per sample")
+    p.add_argument("--prob-top-k", type=int, default=40, help="Logit pruning top-k")
     p.add_argument("--timing-runs", type=int, default=3, help="Timing repetitions")
     p.add_argument("--candidate-device", type=str, default=None, help="Device for candidate decoder")
 
@@ -211,6 +212,7 @@ def run_synthetic_mode(args, cpu, candidate_device):
         tokens=tokens, blank_idx=blank_idx,
         ref_decoded_texts=ref_decoded_texts, timing_stats_list=timing_stats_list,
         format_ref_fn=format_reference_outputs, format_cand_fn=format_candidate_outputs,
+        prob_top_k=args.prob_top_k,
     )
 
     print_timing_table(timing_stats_list)
@@ -271,6 +273,7 @@ def run_real_audio_mode(args, cpu, candidate_device):
         ref_decoded_texts=ref_decoded_texts, timing_stats_list=timing_stats_list,
         format_ref_fn=format_reference_outputs_wav2vec2, format_cand_fn=format_candidate_outputs_wav2vec2,
         is_real_audio=True,
+        prob_top_k=args.prob_top_k,
     )
 
     print_timing_table(timing_stats_list)
@@ -279,6 +282,7 @@ def run_real_audio_mode(args, cpu, candidate_device):
 def _run_candidate_decoder(
     args, candidate_device, log_probs_btv, input_lengths, tokens, blank_idx,
     ref_decoded_texts, timing_stats_list, format_ref_fn, format_cand_fn, is_real_audio=False,
+    prob_top_k=40,
 ):
     candidate_module = load_candidate_module()
     if not (candidate_module and hasattr(candidate_module, "CTCBeamSearchDecoder") and candidate_device.type == "cuda"):
@@ -307,6 +311,7 @@ def _run_candidate_decoder(
         candidate_decoder = CTCBeamSearchDecoder(
             beam_width=args.beam_width, num_classes=V, max_output_length=T,
             blank_id=blank_idx, batch_size=B, max_time=T, schedule=schedule,
+            prob_top_k=prob_top_k,
         )
 
         (sequences, lengths, scores), candidate_timing = run_timed(
@@ -451,6 +456,7 @@ def run_benchmark_mode(args):
             beam_size=current_beam, beam_threshold=args.beam_threshold,
             schedule_config=schedule_config, decoder_filter=args.decoders, quiet=args.quiet,
             cache_cuda_decoder=not args.rebuild_decoder,
+            prob_top_k=args.prob_top_k,
         )
 
         final_results = compute_benchmark_metrics(results, all_refs, total_audio)

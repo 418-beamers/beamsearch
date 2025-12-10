@@ -107,13 +107,14 @@ def run_cuda_decoder(
     beam_size: int,
     schedule_config = None,
     use_cache: bool = True,
+    prob_top_k: int = 40,
 ) -> DecoderResult | None:
     from beamsearch_cuda.beam_search import CTCBeamSearchDecoder, BeamSchedule, SchedulerType
 
     global _cuda_decoder_cache
 
     B, T, V = log_probs.shape
-    cache_key = (B, T, V, beam_size, blank_idx, _get_schedule_hash(schedule_config))
+    cache_key = (B, T, V, beam_size, blank_idx, _get_schedule_hash(schedule_config), prob_top_k)
 
     if use_cache and _cuda_decoder_cache["key"] == cache_key and _cuda_decoder_cache["decoder"] is not None:
         decoder = _cuda_decoder_cache["decoder"]
@@ -145,6 +146,7 @@ def run_cuda_decoder(
             batch_size=B,
             max_time=T,
             schedule=schedule,
+            prob_top_k=prob_top_k,
         )
         if use_cache:
             _cuda_decoder_cache["decoder"] = decoder

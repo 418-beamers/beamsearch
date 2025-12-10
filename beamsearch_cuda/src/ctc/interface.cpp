@@ -19,6 +19,9 @@ uintptr_t create(
     int blank_id,
     int batch_bits,
     int hash_bits,
+    int prob_top_k,
+    float beam_threshold,
+    float token_min_logp,
     BeamSchedule schedule_in
 ) {
     CTCBeamSearchConfig config;
@@ -30,6 +33,9 @@ uintptr_t create(
     config.blank_id = blank_id;
     config.batch_bits = batch_bits;
     config.hash_bits = hash_bits;
+    config.prob_top_k = prob_top_k;
+    config.beam_threshold = beam_threshold;
+    config.token_min_logp = token_min_logp;
     config.schedule = schedule_in;
 
     CTCBeamSearch* decoder = new CTCBeamSearch(config);
@@ -124,6 +130,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def_readwrite("min", &BeamSchedule::min)
         .def_readwrite("init", &BeamSchedule::init)
         .def_readwrite("init_steps", &BeamSchedule::init_steps)
+        .def_readwrite("update_interval", &BeamSchedule::update_interval)
         .def_readwrite("lut_path", &BeamSchedule::lut_path)
         .def_readwrite("mlp_path", &BeamSchedule::mlp_path);
 
