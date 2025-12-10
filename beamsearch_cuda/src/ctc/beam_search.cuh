@@ -26,6 +26,7 @@ struct BeamSchedule {
     int min;
     int init;
     int init_steps;
+    int update_interval;
 
     // file path for LUT
     std::string lut_path;
@@ -80,7 +81,6 @@ struct UniqueState {
     int* token;
     int* last_token;
     int* indices; 
-    unsigned long long* sort_keys;
 };
 
 struct OutputState {

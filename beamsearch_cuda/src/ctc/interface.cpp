@@ -130,6 +130,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def_readwrite("min", &BeamSchedule::min)
         .def_readwrite("init", &BeamSchedule::init)
         .def_readwrite("init_steps", &BeamSchedule::init_steps)
+        .def_readwrite("update_interval", &BeamSchedule::update_interval)
         .def_readwrite("lut_path", &BeamSchedule::lut_path)
         .def_readwrite("mlp_path", &BeamSchedule::mlp_path);
 

@@ -9,7 +9,8 @@ __global__ void top_k(
     CTCBeamSearchConfig config,
     int num_unique,
     int time_step,
-    int beam_width
+    int beam_width,
+    const int* input_lengths
 );
 
 #endif

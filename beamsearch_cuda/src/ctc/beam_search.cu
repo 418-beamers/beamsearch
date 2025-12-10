@@ -154,12 +154,30 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
     } else {
         current_beam_width = config_.beam_width;
     }
+
+    int max_input_length = config_.max_time;
+    if (input_lengths != nullptr) {
+        auto max_it = thrust::max_element(
+            thrust::cuda::par.on(stream),
+            thrust::device_ptr<const int>(input_lengths),
+            thrust::device_ptr<const int>(input_lengths + config_.batch_size)
+        );
+
+        cudaStreamSynchronize(stream);
+        max_input_length = *max_it;
+    }
     
     for (int t = 0; t < config_.max_time; ++t) {
+        if (t >= max_input_length) {
+            break;
+        }
         float current_entropy = 0.0f;
 
         // compute average entropy across all batches
-        if (config_.schedule.adaptive_beam_width) {
+        int interval = config_.schedule.update_interval > 0 ? config_.schedule.update_interval : 5;
+        bool should_update = (t % interval == 0);
+
+        if (should_update && config_.schedule.adaptive_beam_width) {
             const float* timestep_log_probs = log_probs + (long long)t * config_.batch_size * config_.num_classes;
             int num_elements = config_.batch_size * config_.num_classes;
             
@@ -177,10 +195,16 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
             );
             
             current_entropy = total_entropy / (float)config_.batch_size;
+            entropy_history_.push_back(current_entropy);
+            current_beam_width = compute_beam_width(t, current_entropy);
+        } else if (!entropy_history_.empty()) {
+             // Reuse last known entropy/width for logging
+             current_entropy = entropy_history_.back();
+             entropy_history_.push_back(current_entropy);
+        } else {
+             entropy_history_.push_back(0.0f);
         }
         
-        entropy_history_.push_back(current_entropy);
-        current_beam_width = compute_beam_width(t, current_entropy);
         beam_width_history_.push_back(current_beam_width); 
 
         bool use_pruning = (config_.prob_top_k < config_.num_classes);
@@ -275,21 +299,18 @@ void CTCBeamSearch::launch(const float* log_probs, const int* input_lengths, cud
             state_.unique.last_token,
             state_.unique.parent_idx,
             state_.unique.score_total,
-            state_.unique.indices,
-            state_.unique.sort_keys,
-            state_.unique.keys,
-            config_.hash_bits
+            state_.unique.indices 
         );
         
-        thrust::sort_by_key(
+        thrust::sort(
             thrust::cuda::par.on(stream),
-            thrust::device_ptr<unsigned long long>(state_.unique.sort_keys),
-            thrust::device_ptr<unsigned long long>(state_.unique.sort_keys) + num_unique,
-            thrust::device_ptr<int>(state_.unique.indices)
+            thrust::device_ptr<int>(state_.unique.indices),
+            thrust::device_ptr<int>(state_.unique.indices) + num_unique,
+            BatchScoreComp(state_.unique.keys, state_.unique.score_total, config_.hash_bits)
         );
 
         ::top_k<<<config_.batch_size, 256, 0, stream>>>(
-            state_, config_, num_unique, t, current_beam_width
+            state_, config_, num_unique, t, current_beam_width, input_lengths
         );
     }
 }
@@ -336,7 +357,6 @@ cudaError_t CTCBeamSearch::allocate_state() {
     cudaMalloc(&state_.unique.token, num_candidates * sizeof(int));
     cudaMalloc(&state_.unique.last_token, num_candidates * sizeof(int));
     cudaMalloc(&state_.unique.indices, num_candidates * sizeof(int));
-    cudaMalloc(&state_.unique.sort_keys, num_candidates * sizeof(unsigned long long));
 
     cudaMalloc(&state_.output.sequences, num_beams * config_.max_output_length * sizeof(int));
     cudaMalloc(&state_.output.lengths, num_beams * sizeof(int));
@@ -371,7 +391,6 @@ void CTCBeamSearch::free_state() {
     cudaFree(state_.unique.token);
     cudaFree(state_.unique.last_token);
     cudaFree(state_.unique.indices);
-    cudaFree(state_.unique.sort_keys);
     cudaFree(state_.output.sequences);
     cudaFree(state_.output.lengths);
     cudaFree(state_.output.scores);

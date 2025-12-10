@@ -24,6 +24,7 @@ class BeamSchedule(NamedTuple):
     min: int = 0
     init: int = 0
     init_steps: int = 0
+    update_interval: int = 0
     lut_path: str = ""
     mlp_path: str = ""
 
@@ -130,6 +131,7 @@ class CTCBeamSearchDecoder:
         schedule_config.min = schedule.min
         schedule_config.init = schedule.init
         schedule_config.init_steps = schedule.init_steps
+        schedule_config.update_interval = schedule.update_interval
         schedule_config.lut_path = schedule.lut_path
         schedule_config.mlp_path = schedule.mlp_path
 

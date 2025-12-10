@@ -15,10 +15,7 @@ __global__ void compact_and_score_kernel(
     int* unique_last_token,
     int* unique_parent_idx,
     float* unique_score_total,
-    int* unique_indices_out,
-    unsigned long long* unique_sort_keys,
-    const unsigned int* unique_keys,
-    int hash_bits
+    int* unique_indices_out
 );
 
 #endif
