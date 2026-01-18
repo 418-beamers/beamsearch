@@ -1,1 +1,2 @@
-testing/** linguist-detectable=false
+testing/** linguist-detectable=false 
+beamsearch_cuda/src/scheduler/*.py linguist-detectable=false
